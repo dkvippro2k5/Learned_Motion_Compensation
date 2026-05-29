@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+.venv/
+env/
+venv/
+
+# Project Data and Checkpoints
+data/
+checkpoints/
+results/
+bitstream/
+
+# Media files
+*.mp4
+*.avi
+*.mkv
+*.png
+*.jpg
+
+# OS generated files
+.DS_Store
+Thumbs.db
