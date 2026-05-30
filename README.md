@@ -2,15 +2,18 @@
 
 **DVC-inspired | PyTorch 2.x | CompressAI | Ubuntu**
 
-> Project môn học: Nén và Mã hóa Dữ liệu Đa Phương tiện  
-> Tham khảo: Lu et al., "DVC: An End-to-End Deep Video Compression Framework", CVPR 2019  
-> OpenDVC (Yang et al., 2020) — reimplemented với stack hiện đại
+> Project: Nén và Mã hóa Dữ liệu Đa Phương tiện
+> Tham khảo: Lu et al., "DVC: An End-to-End Deep Video Compression Framework", CVPR 2019
 
 ---
 
-## Cấu trúc thư mục
+## 1. Code Submission (Required)
 
-```
+### Clean, Runnable Code & Modular Structure
+
+Dự án này được tổ chức theo cấu trúc module rõ ràng, tất cả các file mã nguồn đều được đặt tên chuẩn mực, kèm theo comments giải thích chức năng chi tiết trong từng file.
+
+```text
 learned_mc_v2/
 ├── models/
 │   ├── flow_net.py        # PWC-Net optical flow (PyTorch 2.x)
@@ -20,225 +23,96 @@ learned_mc_v2/
 │   ├── metrics.py         # PSNR, SSIM, bpp, BD-Rate
 │   └── visualization.py   # Flow color, heatmap, comparison grid
 ├── data/
-│   └── dataset.py         # Synthetic / Vimeo-90K / VideoFile loaders
-├── train.py               # Rate-Distortion training (nhiều lambda)
-├── encode.py              # Encoder: 1 P-frame hoặc video sequence
-├── evaluate.py            # Đánh giá R-D curve, PSNR/SSIM/bpp
-├── demo.py                # Demo nhanh với visualization
-├── generate_report.py     # Tạo báo cáo PDF
-├── requirements.txt
-└── README.md
+│   └── dataset.py         # Synthetic / Vimeo-90K Dataset loaders
+├── train.py               # Rate-Distortion training loop
+├── encode.py              # Encoder (Bitstream generation)
+├── video_demo.py          # Demo: Export side-by-side .mp4 comparison
+├── demo.py                # Demo: Generates frame-by-frame visual grids
+├── requirements.txt       # Environment dependencies
+└── README.md              # Project documentation (You are reading this)
 ```
 
----
+### Setup Instructions & Environment File (Requirements.txt)
 
-## Cài đặt (Ubuntu + VS Code)
+To ensure the code **runs without errors**, follow these exact setup instructions on a Linux machine (Ubuntu recommended):
 
 ```bash
-# Bước 1: Cài hệ thống
+# 1. Update system & install prerequisites (FFmpeg is required for video handling)
 sudo apt update && sudo apt install -y python3.10 python3.10-venv python3-pip git ffmpeg
 
-# Bước 2: Tạo virtual environment
-python3.10 -m venv venv_lmc
-source venv_lmc/bin/activate      # Linux/macOS
-# venv_lmc\Scripts\activate       # Windows
+# 2. Clone the repository
+git clone <YOUR_GITHUB_REPO_LINK>
+cd Learned_Motion_Compensation
 
-# Bước 3: Cài thư viện
+# 3. Create a virtual environment
+python3.10 -m venv venv
+source venv/bin/activate
+
+# 4. Install dependencies (from Requirements.txt)
 pip install -r requirements.txt
-
-# Bước 4: Kiểm tra
-python -c "import torch, compressai; print('PyTorch:', torch.__version__); print('CompressAI:', compressai.__version__)"
 ```
-
-### Chọn interpreter trong VS Code
-
-1. `Ctrl+Shift+P` → "Python: Select Interpreter"
-2. Chọn `venv_lmc/bin/python`
 
 ---
 
-## Sử dụng
+## 2. Dataset / Test Inputs (Required)
 
-### 1. Training
+Do giới hạn dung lượng 100MB của GitHub, kho lưu trữ này không đính kèm các file dữ liệu khổng lồ (vài chục GB) hoặc file video thô. Tuy nhiên, dự án cung cấp 2 phương thức linh hoạt để thoả mãn yêu cầu về Test Inputs:
+
+### Lựa chọn A: Sinh Dữ Liệu Tự Động (Auto Synthetic Data)
+Nếu bạn (Reviewer) chỉ muốn clone code về và **chạy thử nghiệm ngay lập tức** mà không muốn tải dữ liệu rườm rà, bạn chỉ cần gõ lệnh sau. Hệ thống sẽ tự động sinh (generate) một tập dữ liệu ảnh chuyển động (Synthetic data) trực tiếp trên RAM và chạy bộ nén:
 
 ```bash
-# PSNR model — lambda=512 (trung bình, synthetic data)
+# Chạy demo tự động (không cần truyền video)
+python demo.py --checkpoint checkpoints/psnr_l512/best.pth
+```
+
+### Lựa chọn B: Sử dụng Video Thực Tế (Raw Data)
+👉 **[LINK TẢI DATASET (Google Drive): [INSERT_GDRIVE_LINK_HERE]]** 👈
+
+**Hướng dẫn cách lấy dataset (Instructions to obtain dataset):**
+1. Tải file `raw_videos.zip` từ đường link Google Drive ở trên.
+2. Giải nén và đặt toàn bộ các file `.mp4` vào thư mục `data/raw_videos/`.
+3. (Tùy chọn) Chạy lệnh trích xuất: `python extract_custom_videos.py` để tách frame.
+4. Chạy lệnh Test với video thực tế:
+```bash
+python video_demo.py \
+    --checkpoint checkpoints/psnr_l512/best.pth \
+    --video data/raw_videos/8774700-sd_960_540_25fps.mp4 \
+    --frames 50 \
+    --output results/test_output.mp4
+```
+
+---
+
+## 3. Labeled Outputs (Raw, Residuals, Encoded)
+
+Để quan sát rõ ràng các thành phần mã hóa (như yêu cầu: Raw, Residuals, Encoded), thuật toán đã được lập trình để **xuất toàn bộ các thành phần** ra một lưới ảnh (Grid Image).
+
+**Cách chạy:**
+```bash
+python demo.py --checkpoint checkpoints/psnr_l512/best.pth
+```
+**Kết quả đầu ra (`results/demo_output.png`) sẽ được Labeled (Đánh nhãn) rõ ràng:**
+1. **Reference $I_{t-1}$:** Khung hình Gốc trước đó (Raw).
+2. **Current $I_t$:** Khung hình Gốc hiện tại (Raw).
+3. **Predicted $\hat{I}_t$:** Khung hình Dự đoán (Chỉ dùng Optical Flow bù chuyển động).
+4. **Optical Flow:** Biểu đồ màu biểu diễn hướng chuyển động.
+5. **Residual $|R_t|$:** Ma trận phần dư (Lỗi sai lệch giữa Raw và Predicted).
+6. **Reconstructed $I_t$:** Khung hình Đã giải nén (Encoded/Decoded Result) cộng gộp từ Predicted và Residual. Kèm theo chỉ số PSNR, SSIM, bpp.
+
+Ngoài ra, nếu chạy `python video_demo.py`, video kết quả (`results/output_video.mp4`) sẽ được dán nhãn **"Original"** (trái) và **"Reconstructed (DVC)"** (phải) để so sánh trực quan độ mượt mà.
+
+---
+
+## 4. Training Instructions (For Reference)
+
+Nếu muốn train mô hình từ đầu (From scratch):
+
+```bash
+# 1. Train trên dữ liệu tổng hợp (nhanh)
 python train.py --lmbda 512 --metric psnr --epochs 50 --batch_size 8
 
-# PSNR models — tất cả 4 lambda (như OpenDVC)
-python train.py --lmbda 256  --metric psnr --epochs 50
-python train.py --lmbda 512  --metric psnr --epochs 50
-python train.py --lmbda 1024 --metric psnr --epochs 50
-python train.py --lmbda 2048 --metric psnr --epochs 50
-
-# MS-SSIM model — fine-tune từ PSNR checkpoint (như OpenDVC MS-SSIM)
-python train.py --lmbda 32 --metric msssim --epochs 20 \
-                --resume checkpoints/psnr_l1024/best.pth
-
-# Training với Vimeo-90K (cần download 82GB)
-python train.py --lmbda 1024 --metric psnr --epochs 100 \
-                --data_root data/vimeo90k --height 256 --width 448
+# 2. Train trên Dataset Thực tế (Vimeo-90K Subset)
+python train.py --lmbda 1024 --metric psnr --epochs 500 --data_root data/vimeo90k_subset
 ```
-
-**Checkpoint lưu tại:** `checkpoints/<metric>_l<lmbda>/best.pth`
-
-Lambda values (bám sát OpenDVC):
-| Model | Lambda values |
-|-------|--------------|
-| PSNR  | 256, 512, 1024, 2048 |
-| MS-SSIM | 8, 16, 32, 64 |
-
-### 2. Demo
-
-```bash
-# Demo tự động (sinh dữ liệu tổng hợp)
-python demo.py --checkpoint checkpoints/psnr_l512/best.pth
-
-# Demo từ 2 ảnh cụ thể
-python demo.py --checkpoint checkpoints/psnr_l512/best.pth \
-               --ref path/to/frame1.png --cur path/to/frame2.png
-
-# Demo từ video
-python demo.py --checkpoint checkpoints/psnr_l512/best.pth \
-               --video path/to/video.mp4 --start_frame 20
-```
-
-### 3. Encode / Decode (như OpenDVC CLI)
-
-```bash
-# Encode một P-frame (như OpenDVC_test_P-frame.py)
-python encode.py \
-    --ref  BasketballPass_com/f001.png \
-    --raw  BasketballPass/f002.png \
-    --com  BasketballPass_com/f002.png \
-    --bin  BasketballPass_bin/002.bin \
-    --checkpoint checkpoints/psnr_l1024/best.pth
-
-# Encode video sequence (như OpenDVC_test_video.py)
-python encode.py \
-    --path BasketballPass \
-    --frame 100 --GOP 10 \
-    --checkpoint checkpoints/psnr_l1024/best.pth \
-    --metric psnr
-```
-
-**Output directories** (như OpenDVC):
-```
-BasketballPass_com_psnr_1024/   # Reconstructed frames
-BasketballPass_bin_psnr_1024/   # Bitstreams (.bin)
-```
-
-### 4. Đánh giá R-D curve
-
-```bash
-# Đánh giá 1 checkpoint
-python evaluate.py --checkpoints checkpoints/psnr_l512/best.pth
-
-# Đánh giá nhiều lambda → vẽ R-D curve
-python evaluate.py \
-    --checkpoints checkpoints/psnr_l256/best.pth \
-                  checkpoints/psnr_l512/best.pth \
-                  checkpoints/psnr_l1024/best.pth \
-                  checkpoints/psnr_l2048/best.pth \
-    --labels "λ=256" "λ=512" "λ=1024" "λ=2048"
-```
-
-### 5. Tạo báo cáo PDF
-
-```bash
-python generate_report.py
-# Output: results/BaoCao_LearnedMotionCompensation_v2.pdf
-```
-
----
-
-## Kiến trúc
-
-### DVCModel pipeline
-
-```
-I_{t-1}, I_t  (B, 3, H, W)
-     │
-     ▼
-  PWCNet  ──────────────────────────── optical flow field (B, 2, H, W)
-     │
-     ▼
-MotionCompressor ── EntropyBottleneck → flow_hat + R_motion (bpp)
-     │
-     ▼
-bilinear_warp(I_{t-1}, flow_hat) ─────── I_pred (B, 3, H, W)
-     │
-     ▼
-R_t = I_t - I_pred  ─────────────────── residual (B, 3, H, W)
-     │
-     ▼
-ResidualCompressor ─ EntropyBottleneck → R_hat + R_residual (bpp)
-     │
-     ▼
-I_rec = I_pred + R_hat  ──────────────── reconstructed frame
-     │
-     ▼
-Loss = λ·MSE(I_rec, I_t) + R_motion + R_residual
-```
-
-### PWC-Net (Optical Flow)
-
-| Layer | Channels | Resolution |
-|-------|----------|-----------|
-| FeatureExtractor L1 | 16 | H/2 |
-| FeatureExtractor L2 | 32 | H/4 |
-| FeatureExtractor L3 | 64 | H/8 |
-| FeatureExtractor L4 | 96 | H/16 |
-| CostVolume (max_disp=4) | 81 | coarse→fine |
-| FlowDecoder × 3 | — | H/8 → H |
-| ContextNet (dilated) | — | H (refinement) |
-
-Total: ~1.4M params — CPU-friendly.
-
----
-
-## Kết quả
-
-| Metric | Val (epoch 17) | Demo |
-|--------|---------------|------|
-| PSNR   | 17.40 dB      | 25.87 dB |
-| SSIM   | 0.4431        | 0.6889   |
-| bpp    | 5.4220        | 5.4505   |
-| Residual Entropy | — | 3.47 bits |
-
-> Note: Val metrics thấp vì train trên 64×64 synthetic data với M=32 (nhanh). Dùng M=128 + Vimeo-90K để đạt hiệu năng đầy đủ như OpenDVC (~30+ dB).
-
----
-
-## So sánh với OpenDVC gốc
-
-| | OpenDVC | Project này |
-|--|---------|------------|
-| Python | 2.7/3.6 | **3.10+** |
-| DL framework | TF 1.12 | **PyTorch 2.x** |
-| Entropy coding | tf-compression | **CompressAI 1.2.8** |
-| I-frame codec | BPG (external) | **Learned (CompressAI)** |
-| Flow model | SpyNet pretrained | **PWC-Net (trainable)** |
-| Loss | MSE | **Rate-Distortion λ·D+R** |
-| OS support | Ubuntu 16/18 | **Ubuntu 20/22/24** |
-
----
-
-## Thư viện
-
-- **PyTorch ≥ 2.0** — deep learning framework
-- **CompressAI 1.2.8** — entropy coding (thay tf-compression + BPG)
-- **OpenCV ≥ 4.8** — xử lý ảnh/video
-- **scikit-image** — SSIM metric
-- **ReportLab** — báo cáo PDF
-
----
-
-## Tài liệu tham khảo
-
-1. Lu et al., "DVC: An End-to-End Deep Video Compression Framework", **CVPR 2019**
-2. Yang et al., "OpenDVC: An Open Source Implementation of the DVC Video Compression Method", arXiv 2020
-3. Yang et al., "Hierarchical Learned Video Compression (HLVC)", **CVPR 2020**
-4. Sun et al., "PWC-Net: CNNs for Optical Flow Using Pyramid, Warping, and Cost Volume", **CVPR 2018**
-5. Ballé et al., "Variational Image Compression with a Scale Hyperprior", **ICLR 2018**
-6. Begaint et al., "CompressAI: A PyTorch Library for End-to-End Compression Research", 2020
+Mô hình sẽ liên tục đánh giá và tự động lưu phiên bản tốt nhất tại `checkpoints/psnr_l1024/best.pth`.
