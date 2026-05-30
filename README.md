@@ -56,23 +56,15 @@ pip install -r requirements.txt
 
 ## 2. Dataset / Test Inputs (Required)
 
-Do giới hạn dung lượng 100MB của GitHub, kho lưu trữ này không đính kèm các file dữ liệu khổng lồ (vài chục GB) hoặc file video thô. Tuy nhiên, dự án cung cấp 2 phương thức linh hoạt để thoả mãn yêu cầu về Test Inputs:
+Do giới hạn dung lượng 100MB của GitHub, kho lưu trữ này không đính kèm các file dữ liệu video thô. Tuy nhiên, dự án cung cấp phương thức linh hoạt để thoả mãn yêu cầu về Test Inputs:
 
-### Lựa chọn A: Sinh Dữ Liệu Tự Động (Auto Synthetic Data)
-Nếu bạn (Reviewer) chỉ muốn clone code về và **chạy thử nghiệm ngay lập tức** mà không muốn tải dữ liệu rườm rà, bạn chỉ cần gõ lệnh sau. Hệ thống sẽ tự động sinh (generate) một tập dữ liệu ảnh chuyển động (Synthetic data) trực tiếp trên RAM và chạy bộ nén:
-
-```bash
-# Chạy demo tự động (không cần truyền video)
-python demo.py --checkpoint checkpoints/psnr_l512/best.pth
-```
-
-### Lựa chọn B: Sử dụng Video Thực Tế (Raw Data)
-👉 **[LINK TẢI DATASET (Google Drive): [INSERT_GDRIVE_LINK_HERE]]** 👈
+### Sử dụng Video Thực Tế (Raw Data)
+👉 **[LINK TẢI DATASET (Google Drive): [https://drive.google.com/file/d/1_m9vBStY1V1sDS1hwjG7_ecL-HgpBtwT/view?usp=sharing]]** 👈
 
 **Hướng dẫn cách lấy dataset (Instructions to obtain dataset):**
 1. Tải file `raw_videos.zip` từ đường link Google Drive ở trên.
 2. Giải nén và đặt toàn bộ các file `.mp4` vào thư mục `data/raw_videos/`.
-3. (Tùy chọn) Chạy lệnh trích xuất: `python extract_custom_videos.py` để tách frame.
+3. Chạy lệnh trích xuất: `python extract_custom_videos.py` để tách frame.
 4. Chạy lệnh Test với video thực tế:
 ```bash
 python video_demo.py \
@@ -109,10 +101,7 @@ Ngoài ra, nếu chạy `python video_demo.py`, video kết quả (`results/outp
 Nếu muốn train mô hình từ đầu (From scratch):
 
 ```bash
-# 1. Train trên dữ liệu tổng hợp (nhanh)
+# Train trên dữ liệu tổng hợp (nhanh)
 python train.py --lmbda 512 --metric psnr --epochs 50 --batch_size 8
-
-# 2. Train trên Dataset Thực tế (Vimeo-90K Subset)
-python train.py --lmbda 1024 --metric psnr --epochs 500 --data_root data/vimeo90k_subset
 ```
 Mô hình sẽ liên tục đánh giá và tự động lưu phiên bản tốt nhất tại `checkpoints/psnr_l1024/best.pth`.
