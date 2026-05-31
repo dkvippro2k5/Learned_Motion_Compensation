@@ -1,21 +1,4 @@
-"""
-models/dvc_model.py
-Full DVC-inspired Learned Video Compression model.
-
-Combines:
-  - PWCNet for optical flow estimation
-  - MotionCompressor for encoding/decoding flow
-  - BilinearWarp for P-frame prediction
-  - ResidualCompressor for encoding/decoding residuals
-  - IFrameCodec (CompressAI) for I-frames
-
-Rate-Distortion training objective (from DVC paper):
-    L = λ · D + R_motion + R_residual
-where:
-    D  = distortion (MSE or MS-SSIM between I_t and reconstructed I_t)
-    R  = estimated bit-rate from entropy bottleneck
-    λ  = Lagrangian multiplier (controls rate-distortion tradeoff)
-"""
+# Full DVC-inspired Learned Video Compression model.
 
 import torch
 import torch.nn as nn
@@ -24,18 +7,7 @@ from .flow_net import PWCNet, bilinear_warp
 from .entropy_coder import MotionCompressor, ResidualCompressor, IFrameCodec, rate_estimate
 
 class DVCModel(nn.Module):
-    """
-    End-to-end learned video compression model (P-frame codec).
-
-    Training mode: forward() returns reconstructed frame + losses
-    Inference mode: encode() / decode() write/read actual bitstreams
-
-    Args:
-        flow_M: latent channels for motion compressor (default 128)
-        res_M:  latent channels for residual compressor (default 128)
-        lmbda:  rate-distortion lambda (higher = more quality, more bits)
-        use_iframe_codec: if True, also encode I-frames with learned codec
-    """
+  
     def __init__(self, flow_M=128, res_M=128, lmbda=512, use_iframe_codec=False):
         super().__init__()
         self.lmbda = lmbda
@@ -51,16 +23,7 @@ class DVCModel(nn.Module):
             self.iframe_codec = IFrameCodec(quality=4, pretrained=True)
 
     def forward(self, frame_ref, frame_cur):
-        """
-        Training forward pass for one P-frame.
-
-        Args:
-            frame_ref: previous (reference) frame (B, 3, H, W) in [0, 1]
-            frame_cur: current frame to compress  (B, 3, H, W) in [0, 1]
-        Returns:
-            frame_rec: reconstructed current frame (B, 3, H, W)
-            losses:    dict with rate/distortion breakdown
-        """
+        
         B, C, H, W = frame_cur.shape
         num_pixels = B * H * W
 
@@ -100,14 +63,7 @@ class DVCModel(nn.Module):
 
     @torch.no_grad()
     def encode_frame(self, frame_ref, frame_cur):
-        """
-        Compress one P-frame to actual byte strings (inference).
-
-        Returns:
-            bitstreams: dict with 'motion' and 'residual' byte strings
-            meta:       dict with shape info for decoder
-            frame_rec:  reconstructed frame (for next frame reference)
-        """
+        
         B, C, H, W = frame_cur.shape
 
         flow_raw = self.flow_net(frame_ref, frame_cur)
@@ -134,15 +90,7 @@ class DVCModel(nn.Module):
 
     @torch.no_grad()
     def decode_frame(self, frame_ref, bitstream_dict):
-        """
-        Decode a P-frame from byte strings.
-
-        Args:
-            frame_ref:       previous decoded reference frame
-            bitstream_dict:  output of encode_frame()
-        Returns:
-            frame_rec: decoded current frame
-        """
+        
         H = bitstream_dict['H']
         W = bitstream_dict['W']
 
@@ -170,10 +118,7 @@ def _gaussian_window(size=11, sigma=1.5, channels=3):
     return kernel.expand(channels, 1, size, size)
 
 def ms_ssim(img1, img2, levels=3, window_size=11):
-    """
-    Multi-Scale Structural Similarity (MS-SSIM).
-    Returns value in [0, 1] — higher is better.
-    """
+
     weights = torch.tensor([0.0448, 0.2856, 0.3001], device=img1.device)
     weights = weights / weights.sum()
 

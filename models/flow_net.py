@@ -1,16 +1,4 @@
-"""
-models/flow_net.py
-PWC-Net inspired optical flow network — PyTorch 2.x, CPU/GPU compatible.
-
-Reference: Sun et al., "PWC-Net: CNNs for Optical Flow Using Pyramid,
-           Warping, and Cost Volume", CVPR 2018.
-
-Key improvements over LightweightFlowNet (v1):
-- Cost volume layer (cross-correlation) for more accurate matching
-- Coarse-to-fine estimation (pyramid)
-- Explicit context network for refinement
-- ~1.4M params — still lightweight for CPU training
-"""
+# PWC-Net inspired optical flow network — PyTorch 2.x, CPU/GPU compatible.
 
 import torch
 import torch.nn as nn
@@ -42,10 +30,6 @@ class FeatureExtractor(nn.Module):
         return [f1, f2, f3, f4]
 
 class CostVolume(nn.Module):
-    """
-    Compute cross-correlation cost volume between two feature maps.
-    For each displacement d in [-D, D], compute dot product.
-    """
     def __init__(self, max_disp=4):
         super().__init__()
         self.max_disp = max_disp
@@ -65,10 +49,6 @@ class CostVolume(nn.Module):
         return torch.cat(cost, dim=1)  # (B, (2D+1)^2, H, W)
 
 class FlowDecoder(nn.Module):
-    """
-    Decode flow from cost volume + features + upsampled coarser flow.
-    in_channels = cost_vol_channels + feature_channels + 2 (upsampled flow)
-    """
     def __init__(self, in_ch):
         super().__init__()
         self.conv = nn.Sequential(
@@ -86,10 +66,7 @@ class FlowDecoder(nn.Module):
         return self.flow_pred(feat)
 
 class ContextNet(nn.Module):
-    """
-    Context / refinement network: dilated convolutions for larger receptive field.
-    Takes concatenation of features + coarse flow as input.
-    """
+
     def __init__(self, in_ch=34):
         super().__init__()
         self.net = nn.Sequential(
@@ -108,20 +85,6 @@ class ContextNet(nn.Module):
         return self.net(x)
 
 class PWCNet(nn.Module):
-    """
-    PWC-Net: Pyramid, Warping, Cost volume network.
-
-    Input:  frame_ref (B, 3, H, W),  frame_cur (B, 3, H, W)   — values in [0, 1]
-    Output: flow (B, 2, H, W)                                   — pixel displacements
-
-    Architecture:
-        1. Extract 4-level feature pyramids from both frames
-        2. At each level (coarse→fine):
-           a. Warp ref features using upsampled flow
-           b. Compute cost volume between warped ref and cur features
-           c. Decode flow from [cost_vol | cur_feat | upsampled_flow]
-        3. Final context network refines the full-resolution flow
-    """
     def __init__(self, max_disp=4):
         super().__init__()
         self.feature_extractor = FeatureExtractor()
@@ -176,10 +139,6 @@ class PWCNet(nn.Module):
         return flow_full
 
 def bilinear_warp(frame, flow):
-    """
-    Warp a frame (B, C, H, W) using dense flow (B, 2, H, W).
-    Suitable for both frames and feature maps.
-    """
     B, C, H, W = frame.shape
     grid_y, grid_x = torch.meshgrid(
         torch.arange(H, dtype=torch.float32, device=frame.device),

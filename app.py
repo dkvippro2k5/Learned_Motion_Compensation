@@ -63,7 +63,7 @@ elif input_source == "Demo Video 1":
 else:
     video_path = "data/raw_videos/13910151_960_540_24fps.mp4"
 
-num_frames = st.sidebar.slider("Frames to Process", min_value=2, max_value=30, value=10)
+num_frames = st.sidebar.slider("Frames to Process", min_value=2, max_value=50, value=10)
 
 if st.sidebar.button("🚀 Process Video", type="primary"):
     if not video_path or not os.path.exists(video_path):
@@ -133,6 +133,7 @@ if st.sidebar.button("🚀 Process Video", type="primary"):
                 cv2.putText(rec_bgr, f"PSNR: {frame_metrics['psnr']:.2f}dB", (10, 60), font, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
                 cv2.imwrite(os.path.join(rec_dir, f"frame_{frames_processed:02d}.png"), rec_bgr)
 
+                # Avoid autoregressive error accumulation by using the original frame as reference for next step
                 prev_tensor = cur_tensor 
                 
                 frames_processed += 1
