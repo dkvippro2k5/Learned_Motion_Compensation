@@ -2,16 +2,13 @@
 demo.py — Quick demo: run full pipeline on one frame pair or a video clip.
 
 Chạy trong VS Code terminal:
-    # Demo tự động (dùng ảnh tổng hợp, không cần dữ liệu)
+
     python demo.py
 
-    # Demo từ hai ảnh cụ thể
     python demo.py --ref path/to/frame1.png --cur path/to/frame2.png
 
-    # Demo từ video
     python demo.py --video path/to/video.mp4 --start_frame 10
 
-    # Dùng checkpoint đã train
     python demo.py --checkpoint checkpoints/psnr_l512/best.pth
 """
 
@@ -28,9 +25,6 @@ from utils.metrics import psnr, ssim, residual_entropy
 from utils.visualization import (tensor_to_uint8, flow_to_color,
                                   residual_heatmap, make_comparison_grid)
 from data.dataset import generate_synthetic_frames
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 
 def get_args():
     p = argparse.ArgumentParser(description='Learned Motion Compensation Demo')
@@ -49,9 +43,8 @@ def get_args():
     p.add_argument('--device',     type=str,  default='auto')
     return p.parse_args()
 
-
 def load_model(args, device):
-    # Read model config from checkpoint first (avoid size mismatch)
+
     flow_M, res_M, lmbda = args.flow_M, args.res_M, args.lmbda
     ckpt = None
     if args.checkpoint and os.path.exists(args.checkpoint):
@@ -73,14 +66,12 @@ def load_model(args, device):
     model.to(device).eval()
     return model
 
-
 def load_png(path, height, width):
     """Load PNG → (1,3,H,W) float tensor [0,1]."""
     img = cv2.cvtColor(cv2.imread(path), cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, (width, height))
     t   = torch.from_numpy(img.astype(np.float32) / 255.0).permute(2, 0, 1).unsqueeze(0)
     return t
-
 
 def load_video_sequence(video_path, start_frame, num_frames, height, width):
     """Extract consecutive frames from a video."""
@@ -99,7 +90,6 @@ def load_video_sequence(video_path, start_frame, num_frames, height, width):
         raise RuntimeError(f"Could not read enough frames from {video_path}")
     return frames
 
-
 def run_pipeline(model, ref_t, cur_t, device):
     """Full encode-decode pipeline, return all intermediate results."""
     ref_t = ref_t.to(device)
@@ -108,7 +98,7 @@ def run_pipeline(model, ref_t, cur_t, device):
     with torch.no_grad():
         frame_rec, losses = model(ref_t, cur_t)
         flow = model.flow_net(ref_t, cur_t)
-        # Use compressed flow for the 'predicted' frame shown to user
+
         flow_hat, _ = model.motion_coder(flow)
         pred = bilinear_warp(ref_t, flow_hat)
         residual = cur_t - pred
@@ -141,7 +131,6 @@ def run_pipeline(model, ref_t, cur_t, device):
         'metrics':    metrics,
     }
 
-
 def main():
     args   = get_args()
     device = (torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -151,7 +140,6 @@ def main():
     model = load_model(args, device)
     os.makedirs(os.path.dirname(args.output) if os.path.dirname(args.output) else '.', exist_ok=True)
 
-    # ── Source selection ──────────────────────────────────────────────────
     if args.video:
         print(f"Loading {args.frames + 1} frames from video: {args.video}  (start frame {args.start_frame})")
         frames = load_video_sequence(args.video, args.start_frame, args.frames + 1, args.height, args.width)
@@ -174,9 +162,7 @@ def main():
                 save_path=out_path,
             )
             print(f"Saved: {out_path}")
-            
-            # Quan trọng nhất: Lấy ảnh vừa được khôi phục làm mốc tham chiếu cho ảnh tiếp theo
-            # Điều này giúp mô phỏng chính xác đường truyền nén video thực tế (tránh lỗi tích lũy)
+
             ref_t = results['frame_rec'].detach()
             
     else:
@@ -185,7 +171,7 @@ def main():
             ref_t = load_png(args.ref, args.height, args.width)
             cur_t = load_png(args.cur, args.height, args.width)
         else:
-            # Auto-generate synthetic demo pair
+
             print("Auto-generating synthetic demo frames...")
             tmp_dir = 'data/_demo_tmp'
             generate_synthetic_frames(5, args.height, args.width, tmp_dir)
@@ -201,7 +187,6 @@ def main():
             save_path=args.output,
         )
         print(f"Demo figure saved: {args.output}")
-
 
 if __name__ == '__main__':
     main()

@@ -1,18 +1,6 @@
-"""
-evaluate.py — Full evaluation with Rate-Distortion curves
-Generates R-D plots comparable to OpenDVC performance figures.
+# evaluate.py — Full evaluation with Rate-Distortion curves
+# Generates R-D plots comparable to OpenDVC performance figures.
 
-Usage:
-    # Đánh giá một checkpoint, nhiều lambda (vẽ R-D curve)
-    python evaluate.py --checkpoints checkpoints/psnr_l256/best.pth \\
-                                      checkpoints/psnr_l512/best.pth \\
-                                      checkpoints/psnr_l1024/best.pth \\
-                                      checkpoints/psnr_l2048/best.pth \\
-                       --labels "256" "512" "1024" "2048"
-
-    # Đánh giá một checkpoint đơn
-    python evaluate.py --checkpoints checkpoints/psnr_l1024/best.pth
-"""
 
 import os, sys, argparse, json
 import numpy as np
@@ -30,7 +18,6 @@ from utils.visualization import tensor_to_uint8, flow_to_color, residual_heatmap
 from models.flow_net import bilinear_warp
 from data.dataset import FramePairDataset, generate_synthetic_frames
 
-
 def get_args():
     p = argparse.ArgumentParser()
     p.add_argument('--checkpoints', type=str, nargs='+', required=True)
@@ -44,7 +31,6 @@ def get_args():
     p.add_argument('--device',      type=str, default='auto')
     return p.parse_args()
 
-
 def load_model_from_ckpt(ckpt_path, device):
     ckpt = torch.load(ckpt_path, map_location=device)
     cfg  = ckpt.get('args', {})
@@ -56,7 +42,6 @@ def load_model_from_ckpt(ckpt_path, device):
     model.load_state_dict(ckpt['model'], strict=False)
     model.to(device).eval()
     return model, cfg
-
 
 @torch.no_grad()
 def evaluate_model(model, loader, device, num_vis=6):
@@ -77,7 +62,7 @@ def evaluate_model(model, loader, device, num_vis=6):
             all_bpp.append(b)
 
             if len(vis_samples) < num_vis:
-                # Get flow and residual for visualization
+
                 flow = model.flow_net(ref[i:i+1], cur[i:i+1])
                 pred = bilinear_warp(ref[i:i+1], flow)
                 residual = cur[i:i+1] - pred
@@ -113,7 +98,6 @@ def evaluate_model(model, loader, device, num_vis=6):
         'n': len(all_psnr),
     }, vis_samples
 
-
 def plot_rd_curves(rd_points, labels, save_path):
     """Plot Rate-Distortion curves (like OpenDVC performance figures)."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -123,7 +107,6 @@ def plot_rd_curves(rd_points, labels, save_path):
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
 
-    # Group by model (different checkpoints at different lambdas)
     for idx, (points, label) in enumerate(zip(rd_points, labels)):
         bpp_vals  = [p['bpp']['mean'] for p in points]
         psnr_vals = [p['psnr']['mean'] for p in points]
@@ -151,7 +134,6 @@ def plot_rd_curves(rd_points, labels, save_path):
     plt.close()
     print(f"R-D curve saved: {save_path}")
 
-
 def plot_visualization_grid(vis_samples, save_path):
     """Sample grid: ref | cur | pred | rec | flow | residual."""
     n = len(vis_samples)
@@ -176,7 +158,6 @@ def plot_visualization_grid(vis_samples, save_path):
     plt.savefig(save_path, dpi=120, bbox_inches='tight')
     plt.close()
     print(f"Visualization grid saved: {save_path}")
-
 
 def plot_training_curves(history_path, save_path):
     """Plot training history."""
@@ -205,14 +186,12 @@ def plot_training_curves(history_path, save_path):
     plt.close()
     print(f"Training curves saved: {save_path}")
 
-
 def main():
     args = get_args()
     os.makedirs(args.output_dir, exist_ok=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') \
              if args.device == 'auto' else torch.device(args.device)
 
-    # Prepare data
     if not os.path.exists(os.path.join(args.data_root, 'ref')):
         generate_synthetic_frames(300, args.height, args.width, args.data_root)
     dataset = FramePairDataset(args.data_root, args.height, args.width)
@@ -236,12 +215,10 @@ def main():
         print(f"  SSIM: {results['ssim']['mean']:.4f} ± {results['ssim']['std']:.4f}")
         print(f"  bpp:  {results['bpp']['mean']:.5f} ± {results['bpp']['std']:.5f}")
 
-    # Save JSON summary
     summary = {lbl: res for lbl, res in zip(labels, all_results)}
     with open(os.path.join(args.output_dir, 'eval_results.json'), 'w') as f:
         json.dump(summary, f, indent=2)
 
-    # Plots
     plot_rd_curves([[r] for r in all_results], labels,
                    os.path.join(args.output_dir, 'rd_curve.png'))
 
@@ -249,14 +226,12 @@ def main():
         plot_visualization_grid(all_vis[:args.num_vis],
                                 os.path.join(args.output_dir, 'sample_grid.png'))
 
-    # Training curves for first checkpoint
     hist_path = os.path.join(os.path.dirname(args.checkpoints[0]), 'history.json')
     if os.path.exists(hist_path):
         plot_training_curves(hist_path,
                              os.path.join(args.output_dir, 'training_curves.png'))
 
     print(f"\nAll results saved to: {args.output_dir}/")
-
 
 if __name__ == '__main__':
     main()

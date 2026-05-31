@@ -1,5 +1,5 @@
 """
-utils/visualization.py — Visualization helpers for motion compensation outputs.
+Visualization helpers for motion compensation outputs.
 Converts tensors → numpy images ready for matplotlib / cv2.
 """
 
@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import os
 
-
 def tensor_to_uint8(t: torch.Tensor) -> np.ndarray:
     """(B,C,H,W) or (C,H,W) float [0,1] tensor → (H,W,3) uint8 numpy."""
     if t.dim() == 4:
@@ -18,12 +17,7 @@ def tensor_to_uint8(t: torch.Tensor) -> np.ndarray:
     img = t.detach().cpu().permute(1, 2, 0).numpy()
     return np.clip(img * 255, 0, 255).astype(np.uint8)
 
-
 def flow_to_color(flow: torch.Tensor) -> np.ndarray:
-    """
-    Convert (2,H,W) or (1,2,H,W) flow tensor to HSV-colored RGB image.
-    Hue = direction, Saturation = 255, Value = magnitude (normalized).
-    """
     if flow.dim() == 4:
         flow = flow[0]
     flow_np = flow.detach().cpu().numpy()
@@ -39,12 +33,7 @@ def flow_to_color(flow: torch.Tensor) -> np.ndarray:
     hsv = np.stack([hue, sat, val], axis=2)
     return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
 
-
 def residual_heatmap(residual: torch.Tensor) -> np.ndarray:
-    """
-    Convert residual (C,H,W) to a heatmap.
-    Bright = large error, dark = small error.
-    """
     if residual.dim() == 4:
         residual = residual[0]
     r = residual.detach().cpu().abs().mean(dim=0).numpy()  # (H,W)
@@ -52,14 +41,9 @@ def residual_heatmap(residual: torch.Tensor) -> np.ndarray:
     heatmap = cv2.applyColorMap(r_norm, cv2.COLORMAP_JET)
     return cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
 
-
 def make_comparison_grid(ref, cur, pred, frame_rec, flow, residual,
                           metrics: dict, save_path: str):
-    """
-    Save a 2-row comparison figure:
-    Row 1: Reference | Current | Predicted (warp only) | Reconstructed
-    Row 2: Optical Flow | Residual heatmap | Metrics text | Entropy hist
-    """
+
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
 
     ref_np  = tensor_to_uint8(ref)
@@ -72,7 +56,6 @@ def make_comparison_grid(ref, cur, pred, frame_rec, flow, residual,
     fig = plt.figure(figsize=(22, 10), facecolor='#0f1117')
     gs  = gridspec.GridSpec(2, 4, figure=fig, hspace=0.35, wspace=0.06)
 
-    # Row 1
     panels_r1 = [
         (ref_np,  'Reference $I_{t-1}$',         '#60A5FA'),
         (cur_np,  'Current $I_t$',                '#34D399'),
@@ -85,19 +68,16 @@ def make_comparison_grid(ref, cur, pred, frame_rec, flow, residual,
         ax.set_title(title, color=color, fontsize=11, pad=5)
         ax.axis('off')
 
-    # Row 2 col 0: Flow
     ax_flow = fig.add_subplot(gs[1, 0])
     ax_flow.imshow(flow_np)
     ax_flow.set_title('Optical Flow', color='#FB923C', fontsize=11, pad=5)
     ax_flow.axis('off')
 
-    # Row 2 col 1: Heatmap
     ax_heat = fig.add_subplot(gs[1, 1])
     ax_heat.imshow(heat_np)
     ax_heat.set_title('Residual Heatmap', color='#F87171', fontsize=11, pad=5)
     ax_heat.axis('off')
 
-    # Row 2 col 2: Metrics
     ax_met = fig.add_subplot(gs[1, 2])
     ax_met.set_facecolor('#1e2130')
     ax_met.axis('off')
@@ -117,7 +97,6 @@ def make_comparison_grid(ref, cur, pred, frame_rec, flow, residual,
         ax_met.text(0.1, y - 0.07, val, color=c, fontsize=13,
                     fontweight='bold', transform=ax_met.transAxes)
 
-    # Row 2 col 3: Residual histogram
     ax_hist = fig.add_subplot(gs[1, 3])
     ax_hist.set_facecolor('#1e2130')
     if residual.dim() == 4:
@@ -139,7 +118,6 @@ def make_comparison_grid(ref, cur, pred, frame_rec, flow, residual,
                  color='white', fontsize=14, y=1.01)
     plt.savefig(save_path, dpi=120, bbox_inches='tight', facecolor='#0f1117')
     plt.close()
-
 
 def plot_training_history(history: dict, save_path: str):
     """Plot training & validation curves for loss, PSNR, bpp."""
@@ -168,13 +146,7 @@ def plot_training_history(history: dict, save_path: str):
     plt.savefig(save_path, dpi=120, bbox_inches='tight')
     plt.close()
 
-
 def plot_rd_curve(points_list: list, labels: list, save_path: str):
-    """
-    Plot Rate-Distortion curves (PSNR & SSIM vs bpp).
-    points_list: list of lists, each inner list = one model's R-D points.
-    Each point is a dict {'bpp': ..., 'psnr': ..., 'ssim': ...}.
-    """
     colors = ['#2563EB', '#DC2626', '#059669', '#D97706', '#7C3AED', '#DB2777']
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
 
@@ -188,7 +160,7 @@ def plot_rd_curve(points_list: list, labels: list, save_path: str):
         psnrs = [p['psnr'] for p in pts]
         ssims = [p['ssim'] for p in pts]
         c = colors[idx % len(colors)]
-        # Sort by bpp for clean curve
+
         order = sorted(range(len(bpps)), key=lambda i: bpps[i])
         bpps  = [bpps[i]  for i in order]
         psnrs = [psnrs[i] for i in order]

@@ -3,13 +3,11 @@ train.py — Rate-Distortion training for Learned Motion Compensation v2
 Inspired by DVC / OpenDVC training procedure (CVPR 2019)
 
 Usage (chạy trong VS Code terminal):
-    # Chế độ nhanh — CPU, synthetic data
+
     python train.py --lmbda 512 --metric psnr --epochs 20 --batch_size 8
 
-    # PSNR model (like OpenDVC PSNR)
     python train.py --lmbda 1024 --metric psnr --epochs 50 --data_root data/vimeo90k
 
-    # MS-SSIM model (like OpenDVC MS-SSIM, fine-tune từ PSNR checkpoint)
     python train.py --lmbda 32 --metric msssim --epochs 20 --resume checkpoints/psnr_l1024/best.pth
 
 Lambda values (bám sát OpenDVC):
@@ -30,11 +28,9 @@ from models.dvc_model import DVCModel
 from utils.metrics import psnr, ssim, evaluate_frame
 from data.dataset import get_dataloaders
 
-
 def get_args():
     p = argparse.ArgumentParser(description='DVC-inspired Rate-Distortion training')
 
-    # Training params
     p.add_argument('--lmbda',      type=int,   default=512,
                    choices=[8, 16, 32, 64, 256, 512, 1024, 2048],
                    help='R-D lambda. PSNR: 256/512/1024/2048. MS-SSIM: 8/16/32/64')
@@ -47,19 +43,16 @@ def get_args():
     p.add_argument('--aux_lr',     type=float, default=1e-3,
                    help='Learning rate for entropy bottleneck auxiliary loss')
 
-    # Model params (bám sát OpenDVC: N=128 filters, M=128 latent channels)
     p.add_argument('--flow_M',  type=int, default=128,
                    help='Motion latent channels (N in OpenDVC)')
     p.add_argument('--res_M',   type=int, default=128,
                    help='Residual latent channels (M in OpenDVC)')
 
-    # Data
     p.add_argument('--data_root',  type=str, default='data/synthetic')
     p.add_argument('--height',     type=int, default=128)
     p.add_argument('--width',      type=int, default=128)
     p.add_argument('--num_pairs',  type=int, default=400)
 
-    # Checkpointing
     p.add_argument('--checkpoint', type=str, default=None,
                    help='Output dir (auto: checkpoints/<metric>_l<lmbda>/)')
     p.add_argument('--resume',     type=str, default=None)
@@ -67,12 +60,10 @@ def get_args():
 
     return p.parse_args()
 
-
 def setup_checkpoint_dir(args):
     if args.checkpoint:
         return args.checkpoint
     return os.path.join('checkpoints', f'{args.metric}_l{args.lmbda}')
-
 
 def build_model(args):
     return DVCModel(
@@ -81,7 +72,6 @@ def build_model(args):
         lmbda=args.lmbda,
         use_iframe_codec=False,  # I-frame codec adds weight, skip for now
     )
-
 
 def train_one_epoch(model, loader, optimizer, aux_optimizer, metric, device, show_progress=True):
     model.train()
@@ -95,7 +85,6 @@ def train_one_epoch(model, loader, optimizer, aux_optimizer, metric, device, sho
 
         frame_rec, losses = model(ref, cur)
 
-        # Choose loss based on optimization target
         loss = losses['loss_psnr'] if metric == 'psnr' else losses['loss_msssim']
 
         optimizer.zero_grad()
@@ -103,7 +92,6 @@ def train_one_epoch(model, loader, optimizer, aux_optimizer, metric, device, sho
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
 
-        # Auxiliary loss for entropy bottleneck parameters (compressai requirement)
         aux_loss = (model.motion_coder.entropy_bottleneck.loss() +
                     model.residual_coder.entropy_bottleneck.loss())
         aux_optimizer.zero_grad()
@@ -121,7 +109,6 @@ def train_one_epoch(model, loader, optimizer, aux_optimizer, metric, device, sho
         n += 1
 
     return {k: v / max(n, 1) for k, v in stats.items()}
-
 
 @torch.no_grad()
 def validate(model, loader, metric, device, show_progress=True):
@@ -143,13 +130,11 @@ def validate(model, loader, metric, device, show_progress=True):
 
     return {k: v / max(n, 1) for k, v in stats.items()}
 
-
 def main():
     args = get_args()
     ckpt_dir = setup_checkpoint_dir(args)
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    # Device
     if args.device == 'auto':
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     else:
@@ -157,19 +142,15 @@ def main():
     print(f"\nDevice: {device}")
     print(f"Mode:   {args.metric.upper()}, λ={args.lmbda}")
 
-    # Data
     train_loader, val_loader = get_dataloaders(
         args.data_root, args.batch_size, args.height, args.width,
         num_workers=0,
     )
 
-    # Model
     model = build_model(args).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model:  DVCModel | params: {n_params:,}")
 
-    # Separate optimizers for model params vs. entropy bottleneck aux params
-    # (CompressAI standard: aux_optimizer only handles '.quantiles' parameters)
     parameters = [p for n, p in model.named_parameters()
                   if not n.endswith('.quantiles') and p.requires_grad]
     aux_parameters = [p for n, p in model.named_parameters()
@@ -178,11 +159,9 @@ def main():
     optimizer     = optim.Adam(parameters,     lr=args.lr)
     aux_optimizer = optim.Adam(aux_parameters, lr=args.aux_lr)
 
-    # LR schedule: decay at 80% and 90% of training (like DVC)
     milestones = [int(args.epochs * 0.8), int(args.epochs * 0.9)]
     scheduler = MultiStepLR(optimizer, milestones=milestones, gamma=0.1)
 
-    # Resume
     start_epoch = 0
     best_val_psnr = 0.0
     history = {'train': [], 'val': []}
@@ -198,7 +177,6 @@ def main():
         history = ckpt.get('history', history)
         print(f"Resumed from epoch {start_epoch} | best PSNR: {best_val_psnr:.2f}")
 
-    # Save config
     with open(os.path.join(ckpt_dir, 'config.json'), 'w') as f:
         json.dump(vars(args), f, indent=2)
 
@@ -232,7 +210,6 @@ def main():
                   f"V-SSIM:{val_stats['ssim']:.4f}  "
                   f"({elapsed:.1f}s)")
 
-        # Save best
         if val_stats['psnr'] > best_val_psnr:
             best_val_psnr = val_stats['psnr']
             torch.save({
@@ -246,7 +223,6 @@ def main():
             if is_log_epoch:
                 print(f"  ✓ best model saved (PSNR={best_val_psnr:.2f} dB)")
 
-        # Save latest always
         torch.save({
             'epoch': epoch,
             'model': model.state_dict(),
@@ -259,7 +235,6 @@ def main():
 
     print(f"\nDone. Best Val PSNR: {best_val_psnr:.2f} dB")
     print(f"Checkpoint dir: {ckpt_dir}/")
-
 
 if __name__ == '__main__':
     main()

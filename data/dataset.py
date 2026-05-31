@@ -20,9 +20,6 @@ import cv2
 from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 
-
-# ── Synthetic data generator ─────────────────────────────────────────────────
-
 def generate_synthetic_frames(num_pairs=300, height=128, width=128,
                                save_dir='data/synthetic'):
     """
@@ -72,7 +69,6 @@ def generate_synthetic_frames(num_pairs=300, height=128, width=128,
                 cy2 = int(np.clip(cy+dy, b, height-b-1))
                 cv2.ellipse(frame_cur, (cx2, cy2), (a, b), ang, 0, 360, color, -1)
 
-        # Realistic noise
         noise = rng.randint(-6, 7, frame_ref.shape).astype(np.int16)
         frame_cur = np.clip(frame_cur.astype(np.int16) + noise, 0, 255).astype(np.uint8)
 
@@ -80,9 +76,6 @@ def generate_synthetic_frames(num_pairs=300, height=128, width=128,
         cv2.imwrite(os.path.join(save_dir, 'cur', f'{i:05d}.png'), frame_cur)
 
     print(f"Generated {num_pairs} synthetic frame pairs → {save_dir}/")
-
-
-# ── Frame pair dataset ────────────────────────────────────────────────────────
 
 class FramePairDataset(Dataset):
     """
@@ -118,7 +111,6 @@ class FramePairDataset(Dataset):
             cur = np.clip(cur * f, 0, 1).astype(np.float32)
         return (torch.from_numpy(ref.transpose(2, 0, 1)),
                 torch.from_numpy(cur.transpose(2, 0, 1)))
-
 
 class Vimeo90KDataset(Dataset):
     """
@@ -159,21 +151,20 @@ class Vimeo90KDataset(Dataset):
 
     def __getitem__(self, idx):
         ref_path, cur_path = self.pairs[idx]
-        
-        # Load native resolution
+
         ref = cv2.cvtColor(cv2.imread(ref_path), cv2.COLOR_BGR2RGB)
         cur = cv2.cvtColor(cv2.imread(cur_path), cv2.COLOR_BGR2RGB)
         
         H, W = ref.shape[:2]
         
         if self.augment and (H > self.height and W > self.width):
-            # Random Crop (đảm bảo crop đúng cùng 1 tọa độ trên cả 2 frame)
+
             y = np.random.randint(0, H - self.height + 1)
             x = np.random.randint(0, W - self.width + 1)
             ref = ref[y:y+self.height, x:x+self.width]
             cur = cur[y:y+self.height, x:x+self.width]
         else:
-            # Fallback to Resize nếu ảnh gốc nhỏ hơn target
+
             if (H, W) != (self.height, self.width):
                 ref = cv2.resize(ref, (self.width, self.height))
                 cur = cv2.resize(cur, (self.width, self.height))
@@ -181,15 +172,11 @@ class Vimeo90KDataset(Dataset):
         ref = ref.astype(np.float32) / 255.0
         cur = cur.astype(np.float32) / 255.0
 
-        # Horizontal Flip
         if self.augment and np.random.rand() < 0.5:
             ref, cur = ref[:, ::-1].copy(), cur[:, ::-1].copy()
             
         return (torch.from_numpy(ref.transpose(2, 0, 1)),
                 torch.from_numpy(cur.transpose(2, 0, 1)))
-
-
-# ── DataLoader builder ────────────────────────────────────────────────────────
 
 def get_dataloaders(data_root='data/synthetic', batch_size=8,
                     height=128, width=128, val_split=0.1,

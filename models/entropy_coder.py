@@ -17,8 +17,6 @@ import torch.nn.functional as F
 from compressai.entropy_models import EntropyBottleneck, GaussianConditional
 from compressai.models import FactorizedPrior
 
-
-
 class MotionCompressor(nn.Module):
     """
     Compress optical flow field using a hyperprior entropy model.
@@ -36,7 +34,6 @@ class MotionCompressor(nn.Module):
         super().__init__()
         self.M = M
 
-        # Flow → latent (analysis transform)
         self.encoder = nn.Sequential(
             nn.Conv2d(2,  M // 2, 3, stride=2, padding=1),
             nn.LeakyReLU(0.1, inplace=True),
@@ -45,10 +42,8 @@ class MotionCompressor(nn.Module):
             nn.Conv2d(M // 2, M, 3, stride=2, padding=1),
         )
 
-        # Entropy model (factorized prior — simpler than hyperprior, faster training)
         self.entropy_bottleneck = EntropyBottleneck(M)
 
-        # Latent → flow (synthesis transform)
         self.decoder = nn.Sequential(
             nn.ConvTranspose2d(M, M // 2, 4, stride=2, padding=1),
             nn.LeakyReLU(0.1, inplace=True),
@@ -71,7 +66,6 @@ class MotionCompressor(nn.Module):
         z_hat, likelihoods = self.entropy_bottleneck(z)
         flow_hat = self.decoder(z_hat)
 
-        # Resize to match input (stride=8 total, may have rounding)
         if flow_hat.shape != flow.shape:
             flow_hat = F.interpolate(flow_hat, size=flow.shape[2:],
                                      mode='bilinear', align_corners=False)
@@ -93,7 +87,6 @@ class MotionCompressor(nn.Module):
             flow_hat = F.interpolate(flow_hat, size=out_size,
                                      mode='bilinear', align_corners=False)
         return flow_hat
-
 
 class ResidualCompressor(nn.Module):
     """
@@ -145,7 +138,6 @@ class ResidualCompressor(nn.Module):
                                     mode='bilinear', align_corners=False)
         return res_hat
 
-
 class IFrameCodec(nn.Module):
     """
     Learned I-frame codec using CompressAI's bmshj2018_factorized.
@@ -157,8 +149,7 @@ class IFrameCodec(nn.Module):
     def __init__(self, quality: int = 4, pretrained: bool = False):
         super().__init__()
         self.codec = FactorizedPrior(128, 192)
-        # Freeze codec during motion compensation training
-        # (optional: set requires_grad=True to fine-tune end-to-end)
+
         for p in self.codec.parameters():
             p.requires_grad = False
 
@@ -180,7 +171,6 @@ class IFrameCodec(nn.Module):
     def decompress(self, strings, shape):
         """Decompress from bitstream."""
         return self.codec.decompress(strings, shape)['x_hat'].clamp(0, 1)
-
 
 def rate_estimate(likelihoods, num_pixels: int) -> torch.Tensor:
     """

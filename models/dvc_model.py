@@ -23,7 +23,6 @@ import torch.nn.functional as F
 from .flow_net import PWCNet, bilinear_warp
 from .entropy_coder import MotionCompressor, ResidualCompressor, IFrameCodec, rate_estimate
 
-
 class DVCModel(nn.Module):
     """
     End-to-end learned video compression model (P-frame codec).
@@ -41,16 +40,12 @@ class DVCModel(nn.Module):
         super().__init__()
         self.lmbda = lmbda
 
-        # Flow estimation (not compressed, guides the motion coder)
         self.flow_net = PWCNet(max_disp=4)
 
-        # Motion compression
         self.motion_coder = MotionCompressor(M=flow_M)
 
-        # Residual compression
         self.residual_coder = ResidualCompressor(M=res_M)
 
-        # Optional I-frame codec (CompressAI)
         self.use_iframe_codec = use_iframe_codec
         if use_iframe_codec:
             self.iframe_codec = IFrameCodec(quality=4, pretrained=True)
@@ -69,36 +64,26 @@ class DVCModel(nn.Module):
         B, C, H, W = frame_cur.shape
         num_pixels = B * H * W
 
-        # ── Step 1: Estimate optical flow ──────────────────────────────────
         flow_raw = self.flow_net(frame_ref, frame_cur)
 
-        # ── Step 2: Compress and reconstruct flow ──────────────────────────
         flow_hat, motion_likelihoods = self.motion_coder(flow_raw)
 
-        # ── Step 3: Warp reference frame using compressed flow ──────────────
         frame_pred = bilinear_warp(frame_ref, flow_hat)
 
-        # ── Step 4: Compute residual ───────────────────────────────────────
         residual = frame_cur - frame_pred
 
-        # ── Step 5: Compress and reconstruct residual ──────────────────────
         residual_hat, res_likelihoods = self.residual_coder(residual)
 
-        # ── Step 6: Reconstruct final frame ───────────────────────────────
         frame_rec = (frame_pred + residual_hat).clamp(0, 1)
 
-        # ── Rate-Distortion loss ───────────────────────────────────────────
         R_motion   = rate_estimate(motion_likelihoods, num_pixels)
         R_residual = rate_estimate(res_likelihoods,    num_pixels)
         R_total    = R_motion + R_residual
 
-        # Distortion: MSE
         D_mse = F.mse_loss(frame_rec, frame_cur)
 
-        # Distortion: MS-SSIM (1 - ms_ssim, so lower = better)
         D_msssim = 1.0 - ms_ssim(frame_rec, frame_cur)
 
-        # Total loss: λ·D + R  (use MSE by default; switch to MS-SSIM by passing metric)
         loss_psnr   = self.lmbda * D_mse   + R_total
         loss_msssim = self.lmbda * D_msssim + R_total
 
@@ -125,23 +110,17 @@ class DVCModel(nn.Module):
         """
         B, C, H, W = frame_cur.shape
 
-        # Estimate flow
         flow_raw = self.flow_net(frame_ref, frame_cur)
 
-        # Compress motion
         motion_strings, motion_shape = self.motion_coder.compress(flow_raw)
 
-        # Reconstruct flow for warping
         flow_hat = self.motion_coder.decompress(motion_strings, motion_shape, (H, W))
 
-        # Warp and compute residual
         frame_pred = bilinear_warp(frame_ref, flow_hat)
         residual = frame_cur - frame_pred
 
-        # Compress residual
         res_strings, res_shape = self.residual_coder.compress(residual)
 
-        # Reconstruct
         residual_hat = self.residual_coder.decompress(res_strings, res_shape, (H, W))
         frame_rec = (frame_pred + residual_hat).clamp(0, 1)
 
@@ -167,17 +146,14 @@ class DVCModel(nn.Module):
         H = bitstream_dict['H']
         W = bitstream_dict['W']
 
-        # Decompress flow
         flow_hat = self.motion_coder.decompress(
             bitstream_dict['motion_strings'],
             bitstream_dict['motion_shape'],
             (H, W)
         )
 
-        # Warp
         frame_pred = bilinear_warp(frame_ref, flow_hat)
 
-        # Decompress residual
         residual_hat = self.residual_coder.decompress(
             bitstream_dict['residual_strings'],
             bitstream_dict['res_shape'],
@@ -186,16 +162,12 @@ class DVCModel(nn.Module):
 
         return (frame_pred + residual_hat).clamp(0, 1)
 
-
-# ── MS-SSIM implementation (no external dependency) ──────────────────────────
-
 def _gaussian_window(size=11, sigma=1.5, channels=3):
     coords = torch.arange(size, dtype=torch.float32) - size // 2
     g = torch.exp(-coords ** 2 / (2 * sigma ** 2))
     g /= g.sum()
     kernel = (g.unsqueeze(0) * g.unsqueeze(1)).unsqueeze(0).unsqueeze(0)
     return kernel.expand(channels, 1, size, size)
-
 
 def ms_ssim(img1, img2, levels=3, window_size=11):
     """
@@ -225,7 +197,6 @@ def ms_ssim(img1, img2, levels=3, window_size=11):
                    ((mu1_sq + mu2_sq + C1)*(sig1 + sig2 + C2))
         mssim.append(ssim_map.mean())
 
-        # Downsample for next level
         if i < levels - 1:
             img1 = F.avg_pool2d(img1, 2)
             img2 = F.avg_pool2d(img2, 2)

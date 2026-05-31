@@ -34,7 +34,6 @@ def main():
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps == 0 or np.isnan(fps): fps = 25.0
 
-    # Prepare VideoWriter
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(args.output, fourcc, fps, (args.width * 2, args.height))
@@ -44,7 +43,6 @@ def main():
         print("Cannot read video.")
         return
 
-    # Process Initial I-frame (Reference)
     frame = cv2.resize(frame, (args.width, args.height))
     ref_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     ref_t = torch.from_numpy(ref_np.astype(np.float32) / 255.0).permute(2,0,1).unsqueeze(0).to(device)
@@ -64,20 +62,26 @@ def main():
         cur_t = torch.from_numpy(cur_np.astype(np.float32) / 255.0).permute(2,0,1).unsqueeze(0).to(device)
 
         with torch.no_grad():
-            frame_rec, _ = model(ref_t, cur_t)
-            
-        # Convert back to BGR for OpenCV
+            frame_rec, losses = model(ref_t, cur_t)
+
+        bpp_val = losses['bpp'].item()
+        from utils.metrics import evaluate_frame
+        metrics = evaluate_frame(cur_t, frame_rec, bpp_val)
+        psnr_val = metrics['psnr']
+        ssim_val = metrics['ms_ssim']
+
         rec_bgr = cv2.cvtColor(tensor_to_uint8(frame_rec[0].cpu()), cv2.COLOR_RGB2BGR)
-        
-        # Combine side by side
+
         disp_frame = np.concatenate([cur_frame, rec_bgr], axis=1)
         cv2.putText(disp_frame, "Original", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         cv2.putText(disp_frame, "Reconstructed (DVC)", (args.width + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+        metrics_text = f"BPP: {bpp_val:.3f} | PSNR: {psnr_val:.2f} | SSIM: {ssim_val:.3f}"
+        cv2.putText(disp_frame, metrics_text, (args.width + 10, args.height - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
         
         out.write(disp_frame)
-        
-        # Update reference frame
-        ref_t = frame_rec.detach()
+
+        ref_t = cur_t.detach()
 
     cap.release()
     out.release()

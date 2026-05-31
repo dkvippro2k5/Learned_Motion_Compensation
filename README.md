@@ -28,6 +28,7 @@ learned_mc_v2/
 ├── encode.py              # Encoder (Bitstream generation)
 ├── video_demo.py          # Demo: Export side-by-side .mp4 comparison
 ├── demo.py                # Demo: Generates frame-by-frame visual grids
+├── app.py                 # Live Demo: Streamlit Interactive Web Application
 ├── requirements.txt       # Environment dependencies
 └── README.md              # Project documentation (You are reading this)
 ```
@@ -93,6 +94,21 @@ python demo.py --checkpoint checkpoints/psnr_l512/best.pth
 6. **Reconstructed $I_t$:** Khung hình Đã giải nén (Encoded/Decoded Result) cộng gộp từ Predicted và Residual. Kèm theo chỉ số PSNR, SSIM, bpp.
 
 Ngoài ra, nếu chạy `python video_demo.py`, video kết quả (`results/output_video.mp4`) sẽ được dán nhãn **"Original"** (trái) và **"Reconstructed (DVC)"** (phải) để so sánh trực quan độ mượt mà.
+
+---
+
+## 4. Live Demo System (Interactive)
+
+Hệ thống được tích hợp sẵn một ứng dụng Web tương tác bằng Streamlit, cho phép:
+- Tải video lên hoặc chọn video mẫu.
+- Kéo thanh trượt để thay đổi Bitrate (hệ số Lambda $\lambda$).
+- Xem hệ thống xử lý, so sánh video gốc và video nén theo thời gian thực.
+- Cập nhật chỉ số PSNR, SSIM, BPP trực tiếp trên màn hình.
+
+**Cách chạy Live Demo:**
+```bash
+streamlit run app.py
+```
 
 ---
 

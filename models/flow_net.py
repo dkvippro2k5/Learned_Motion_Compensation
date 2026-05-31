@@ -16,7 +16,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 def conv_bn_relu(in_ch, out_ch, kernel=3, stride=1, dilation=1):
     pad = dilation * (kernel // 2)
     return nn.Sequential(
@@ -25,7 +24,6 @@ def conv_bn_relu(in_ch, out_ch, kernel=3, stride=1, dilation=1):
         nn.BatchNorm2d(out_ch),
         nn.LeakyReLU(0.1, inplace=True),
     )
-
 
 class FeatureExtractor(nn.Module):
     """Extract multi-scale features from a single frame."""
@@ -42,7 +40,6 @@ class FeatureExtractor(nn.Module):
         f3 = self.layer3(f2)  # /8
         f4 = self.layer4(f3)  # /16
         return [f1, f2, f3, f4]
-
 
 class CostVolume(nn.Module):
     """
@@ -67,7 +64,6 @@ class CostVolume(nn.Module):
                 cost.append(corr)
         return torch.cat(cost, dim=1)  # (B, (2D+1)^2, H, W)
 
-
 class FlowDecoder(nn.Module):
     """
     Decode flow from cost volume + features + upsampled coarser flow.
@@ -88,7 +84,6 @@ class FlowDecoder(nn.Module):
     def forward(self, x):
         feat = self.conv(x)
         return self.flow_pred(feat)
-
 
 class ContextNet(nn.Module):
     """
@@ -112,7 +107,6 @@ class ContextNet(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-
 class PWCNet(nn.Module):
     """
     PWC-Net: Pyramid, Warping, Cost volume network.
@@ -134,12 +128,10 @@ class PWCNet(nn.Module):
         self.cost_volume = CostVolume(max_disp)
         cv_ch = (2 * max_disp + 1) ** 2  # 81 channels
 
-        # Decoders for each pyramid level (coarsest first = level 4)
         self.decoder4 = FlowDecoder(cv_ch + 96 + 0)   # no upsampled flow at coarsest
         self.decoder3 = FlowDecoder(cv_ch + 64 + 2)
         self.decoder2 = FlowDecoder(cv_ch + 32 + 2)
 
-        # Context network on level-2 features
         self.context = ContextNet(in_ch=32 + 2)
 
     @staticmethod
@@ -159,37 +151,29 @@ class PWCNet(nn.Module):
                              mode='bilinear', padding_mode='border', align_corners=True)
 
     def forward(self, frame_ref, frame_cur):
-        # Extract feature pyramids
+
         feats_ref = self.feature_extractor(frame_ref)  # [f1..f4]
         feats_cur = self.feature_extractor(frame_cur)
 
-        # Level 4 (coarsest, 1/16 resolution) — no initial flow
         cv4 = self.cost_volume(feats_ref[3], feats_cur[3])
         flow4 = self.decoder4(torch.cat([cv4, feats_cur[3]], dim=1))
 
-        # Level 3 (1/8)
         up_flow4 = F.interpolate(flow4, scale_factor=2, mode='bilinear', align_corners=True) * 2
         warped3 = self.warp(feats_ref[2], up_flow4)
         cv3 = self.cost_volume(warped3, feats_cur[2])
         flow3 = self.decoder3(torch.cat([cv3, feats_cur[2], up_flow4], dim=1)) + up_flow4
 
-        # Level 2 (1/4)
         up_flow3 = F.interpolate(flow3, scale_factor=2, mode='bilinear', align_corners=True) * 2
         warped2 = self.warp(feats_ref[1], up_flow3)
         cv2 = self.cost_volume(warped2, feats_cur[1])
         flow2 = self.decoder2(torch.cat([cv2, feats_cur[1], up_flow3], dim=1)) + up_flow3
 
-        # Context refinement at level 2
         flow2_refined = flow2 + self.context(torch.cat([feats_cur[1], flow2], dim=1))
 
-        # Upsample to full resolution
         flow_full = F.interpolate(flow2_refined, scale_factor=4,
                                   mode='bilinear', align_corners=True) * 4
 
         return flow_full
-
-
-# ── Bilinear warp (frame-level, not feature-level) ──────────────────────────
 
 def bilinear_warp(frame, flow):
     """

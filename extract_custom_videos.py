@@ -17,7 +17,7 @@ for idx, video_path in enumerate(video_files):
     print(f"Extracting 7 frames from {os.path.basename(video_path)} to {seq_dir}...")
     
     cap = cv2.VideoCapture(video_path)
-    # Start extracting slightly into the video to avoid black screens
+
     cap.set(cv2.CAP_PROP_POS_FRAMES, 20)
     
     success = True
@@ -30,15 +30,13 @@ for idx, video_path in enumerate(video_files):
                 print(f"Failed to read from {video_path}")
                 success = False
                 break
-                
-        # Giữ nguyên độ phân giải native (960x540) để RandomCrop xử lý
+
         cv2.imwrite(os.path.join(seq_dir, f"im{i}.png"), frame)
     
     cap.release()
     if success:
         valid_seqs.append(f"00001/{seq_id}")
 
-# Tạo danh sách train/test
 with open("data/vimeo90k_subset/sep_trainlist.txt", "w") as f:
     for seq in valid_seqs[:-1]: # Giữ lại 1 video cuối để test/validation
         f.write(f"{seq}\n")
