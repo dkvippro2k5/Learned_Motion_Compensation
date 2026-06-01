@@ -81,7 +81,9 @@ def main():
         
         out.write(disp_frame)
 
-        ref_t = cur_t.detach()
+        # Decoder only has the reconstructed frame -> propagate it as the next
+        # reference (honest codec behaviour, shows real error accumulation).
+        ref_t = frame_rec.detach()
 
     cap.release()
     out.release()

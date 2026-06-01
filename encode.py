@@ -35,7 +35,9 @@ def get_args():
     return p.parse_args()
 
 def load_model(args, device):
-    model = DVCModel(flow_M=args.flow_M, res_M=args.res_M, lmbda=args.lmbda)
+    # use_iframe_codec=True so I-frames are really intra-coded (pretrained codec)
+    model = DVCModel(flow_M=args.flow_M, res_M=args.res_M, lmbda=args.lmbda,
+                     use_iframe_codec=True)
     if args.checkpoint and os.path.exists(args.checkpoint):
         ckpt = torch.load(args.checkpoint, map_location=device)
         model.load_state_dict(ckpt['model'], strict=False)
@@ -43,6 +45,7 @@ def load_model(args, device):
     else:
         print("Warning: No checkpoint — using random weights (demo only)")
     model.to(device).eval()
+    model.update(force=True)  # build entropy-coder CDF tables for real coding
     return model
 
 def load_frame(path, height=None, width=None):
@@ -125,17 +128,26 @@ def encode_video(model, frame_dir, out_com_dir, out_bin_dir, n_frames, gop, devi
 
         if i % gop == 0:
 
-            import shutil
-            shutil.copy2(src_path, com_path)
-            ref_tensor = cur_tensor.clone()
+            # I-frame: intra-code with the pretrained image codec (real bitstream)
+            cur = cur_tensor.to(device)
+            with torch.no_grad():
+                out = model.iframe_codec.compress(cur)
+                rec = model.iframe_codec.decompress(out)
+            i_bytes = sum(len(s) for s in out['strings'][0])
+            bpp = i_bytes * 8 / (H * W)
+            save_frame(rec, com_path)
+            ref_tensor = rec.cpu()
             metrics = {
                 'frame': frame_num,
                 'type': 'I',
-                'psnr': float('inf'),
-                'ssim': 1.0,
-                'bpp': H * W * 24 / (H * W),  # raw RGB as placeholder
+                'psnr': psnr(cur, rec),
+                'ssim': ssim(cur, rec),
+                'bpp': bpp,
             }
-            print(f"  Frame {frame_num:3d} [I] PSNR:  inf    SSIM: 1.0000  bpp: 24.00")
+            print(f"  Frame {frame_num:3d} [I] "
+                  f"PSNR:{metrics['psnr']:6.2f}  "
+                  f"SSIM:{metrics['ssim']:.4f}  "
+                  f"bpp:{bpp:.4f}")
         else:
 
             frame_rec, metrics = encode_one_pframe(

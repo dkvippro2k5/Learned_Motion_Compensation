@@ -108,9 +108,11 @@ class PWCNet(nn.Module):
         )
         grid = torch.stack([grid_x, grid_y], dim=0).unsqueeze(0)
         new_grid = grid + flow
-        new_grid[:, 0] = 2.0 * new_grid[:, 0] / max(W - 1, 1) - 1.0
-        new_grid[:, 1] = 2.0 * new_grid[:, 1] / max(H - 1, 1) - 1.0
-        return F.grid_sample(feat, new_grid.permute(0, 2, 3, 1),
+        # Normalise to [-1, 1] without in-place writes (keeps autograd graph clean).
+        nx = 2.0 * new_grid[:, 0] / max(W - 1, 1) - 1.0
+        ny = 2.0 * new_grid[:, 1] / max(H - 1, 1) - 1.0
+        norm_grid = torch.stack([nx, ny], dim=1).permute(0, 2, 3, 1)
+        return F.grid_sample(feat, norm_grid,
                              mode='bilinear', padding_mode='border', align_corners=True)
 
     def forward(self, frame_ref, frame_cur):
@@ -147,7 +149,9 @@ def bilinear_warp(frame, flow):
     )
     grid = torch.stack([grid_x, grid_y], dim=0).unsqueeze(0).expand(B, -1, -1, -1)
     new_grid = grid + flow
-    new_grid[:, 0] = 2.0 * new_grid[:, 0] / max(W - 1, 1) - 1.0
-    new_grid[:, 1] = 2.0 * new_grid[:, 1] / max(H - 1, 1) - 1.0
-    return F.grid_sample(frame, new_grid.permute(0, 2, 3, 1),
+    # Normalise to [-1, 1] without in-place writes (keeps autograd graph clean).
+    nx = 2.0 * new_grid[:, 0] / max(W - 1, 1) - 1.0
+    ny = 2.0 * new_grid[:, 1] / max(H - 1, 1) - 1.0
+    norm_grid = torch.stack([nx, ny], dim=1).permute(0, 2, 3, 1)
+    return F.grid_sample(frame, norm_grid,
                          mode='bilinear', padding_mode='border', align_corners=True)

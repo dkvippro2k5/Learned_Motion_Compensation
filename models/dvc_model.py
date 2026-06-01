@@ -88,6 +88,13 @@ class DVCModel(nn.Module):
             'H': H, 'W': W,
         }, frame_rec
 
+    def update(self, force: bool = True):
+        """Build entropy-coder CDF tables. Call once before compress/decompress."""
+        self.motion_coder.update(force=force)
+        self.residual_coder.update(force=force)
+        if self.use_iframe_codec:
+            self.iframe_codec.update(force=force)
+
     @torch.no_grad()
     def decode_frame(self, frame_ref, bitstream_dict):
         

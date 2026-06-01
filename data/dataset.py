@@ -1,15 +1,18 @@
 """
-data/dataset.py — Dataset utilities for Learned Motion Compensation v2
+data/dataset.py — Dataset utilities for Learned Motion Compensation.
 
-Supports:
-  1. Synthetic frames (auto-generated, no download)
-  2. Vimeo-90K septuplet format (as used in DVC/OpenDVC training)
-  3. Raw video files via ffmpeg
-  4. UCF-101 (folder of frames)
+Provides:
+  1. generate_synthetic_frames() — auto-generated moving-shape pairs (no download)
+  2. FramePairDataset          — loads (ref, cur) pairs from ref/ and cur/ dirs
+  3. Vimeo90KDataset           — Vimeo-90K septuplet format (DVC/OpenDVC training)
+  4. get_dataloaders()         — auto-selects the right dataset and splits train/val
+
+To turn raw .mp4 clips into the ref/cur layout used by FramePairDataset, run
+prepare_real_dataset.py (this module does not read video files itself).
 
 Vimeo-90K format expected at:
     vimeo_septuplet/sequences/<clip_id>/<seq_id>/im1.png ... im7.png
-Use consecutive pairs (im1, im2), (im2, im3), ... from each 7-frame clip.
+Each 7-frame clip yields consecutive pairs (im1, im2), ..., (im6, im7).
 """
 
 import os

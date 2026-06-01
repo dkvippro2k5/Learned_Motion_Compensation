@@ -6,15 +6,13 @@ import os, sys, argparse, json
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import cv2
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models.dvc_model import DVCModel
-from utils.metrics import psnr, ssim, evaluate_frame, bd_rate, residual_entropy
-from utils.visualization import tensor_to_uint8, flow_to_color, residual_heatmap, plot_training_history, plot_rd_curve
+from utils.metrics import psnr, ssim, residual_entropy
+from utils.visualization import tensor_to_uint8, flow_to_color, plot_training_history
 from models.flow_net import bilinear_warp
 from data.dataset import FramePairDataset, generate_synthetic_frames
 
@@ -68,26 +66,13 @@ def evaluate_model(model, loader, device, num_vis=6):
                 residual = cur[i:i+1] - pred
                 ent = residual_entropy(residual[0].cpu())
 
-                def t2np(t):
-                    if t.dim() == 4: t = t[0]
-                    return (t.cpu().permute(1,2,0).numpy().clip(0,1)*255).astype(np.uint8)
-
-                flow_np = flow[0].cpu().permute(1,2,0).numpy()
-                u, v = flow_np[:,:,0], flow_np[:,:,1]
-                mag = np.sqrt(u**2 + v**2)
-                ang = np.arctan2(v, u)
-                hue = ((ang + np.pi) / (2*np.pi) * 179).astype(np.uint8)
-                sat = np.ones_like(hue) * 255
-                val_c = (mag / (mag.max() + 1e-8) * 255).astype(np.uint8)
-                flow_color = cv2.cvtColor(np.stack([hue, sat, val_c], 2), cv2.COLOR_HSV2RGB)
-
                 vis_samples.append({
-                    'ref':      t2np(ref[i]),
-                    'cur':      t2np(cur[i]),
-                    'pred':     t2np(pred[0]),
-                    'rec':      t2np(frame_rec[i]),
-                    'flow':     flow_color,
-                    'residual': t2np(residual[0].abs().clamp(0,1)),
+                    'ref':      tensor_to_uint8(ref[i]),
+                    'cur':      tensor_to_uint8(cur[i]),
+                    'pred':     tensor_to_uint8(pred[0]),
+                    'rec':      tensor_to_uint8(frame_rec[i]),
+                    'flow':     flow_to_color(flow),
+                    'residual': tensor_to_uint8(residual[0].abs().clamp(0, 1)),
                     'psnr': p, 'ssim': s, 'bpp': b, 'entropy': ent,
                 })
 
@@ -159,33 +144,6 @@ def plot_visualization_grid(vis_samples, save_path):
     plt.close()
     print(f"Visualization grid saved: {save_path}")
 
-def plot_training_curves(history_path, save_path):
-    """Plot training history."""
-    with open(history_path) as f:
-        history = json.load(f)
-
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    keys = [('loss', 'Total Loss'), ('psnr', 'PSNR (dB)'), ('bpp', 'bpp')]
-
-    for ax, (key, ylabel) in zip(axes, keys):
-        t_vals = [e.get(key, 0) for e in history.get('train', [])]
-        v_vals = [e.get(key, 0) for e in history.get('val', [])]
-        epochs = list(range(1, len(t_vals) + 1))
-        ax.plot(epochs, t_vals, label='Train', color='#2563EB')
-        ax.plot(epochs, v_vals, label='Val',   color='#DC2626')
-        ax.set_title(ylabel, fontsize=11)
-        ax.set_xlabel('Epoch')
-        ax.legend()
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.grid(True, alpha=0.2)
-
-    plt.suptitle('Training Curves — DVC-inspired Learned Motion Compensation', fontsize=13)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=120, bbox_inches='tight')
-    plt.close()
-    print(f"Training curves saved: {save_path}")
-
 def main():
     args = get_args()
     os.makedirs(args.output_dir, exist_ok=True)
@@ -195,7 +153,10 @@ def main():
     if not os.path.exists(os.path.join(args.data_root, 'ref')):
         generate_synthetic_frames(300, args.height, args.width, args.data_root)
     dataset = FramePairDataset(args.data_root, args.height, args.width)
-    loader  = DataLoader(dataset, batch_size=8, shuffle=False, num_workers=0)
+    # batch_size=1 so the per-frame bpp from the model matches the per-frame
+    # PSNR/SSIM (with a batch, losses['bpp'] is averaged and cannot be assigned
+    # back to individual samples).
+    loader  = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
     labels = args.labels or [os.path.basename(os.path.dirname(c)) for c in args.checkpoints]
 
@@ -228,8 +189,11 @@ def main():
 
     hist_path = os.path.join(os.path.dirname(args.checkpoints[0]), 'history.json')
     if os.path.exists(hist_path):
-        plot_training_curves(hist_path,
-                             os.path.join(args.output_dir, 'training_curves.png'))
+        with open(hist_path) as f:
+            history = json.load(f)
+        plot_training_history(history,
+                              os.path.join(args.output_dir, 'training_curves.png'))
+        print(f"Training curves saved: {args.output_dir}/training_curves.png")
 
     print(f"\nAll results saved to: {args.output_dir}/")
 

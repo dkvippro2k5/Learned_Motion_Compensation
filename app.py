@@ -39,7 +39,7 @@ st.sidebar.header("⚙️ Configuration")
 
 st.sidebar.markdown("### Bitrate vs Quality")
 lambda_choice = st.sidebar.select_slider(
-    "Select Lambda ($\lambda$)",
+    r"Select Lambda ($\lambda$)",
     options=[256, 512, 1024, 2048],
     value=1024,
     help="Higher lambda = better quality (PSNR) but higher bitrate (BPP)."
@@ -59,7 +59,7 @@ if input_source == "Upload Video":
         tfile.write(uploaded_file.read())
         video_path = tfile.name
 elif input_source == "Demo Video 1":
-    video_path = "data/raw_videos/12843543_960_540_30fps.mp4"
+    video_path = "data/raw_videos/15604713_960_540_25fps.mp4"
 else:
     video_path = "data/raw_videos/13910151_960_540_24fps.mp4"
 
@@ -133,8 +133,10 @@ if st.sidebar.button("🚀 Process Video", type="primary"):
                 cv2.putText(rec_bgr, f"PSNR: {frame_metrics['psnr']:.2f}dB", (10, 60), font, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
                 cv2.imwrite(os.path.join(rec_dir, f"frame_{frames_processed:02d}.png"), rec_bgr)
 
-                # Avoid autoregressive error accumulation by using the original frame as reference for next step
-                prev_tensor = cur_tensor 
+                # Honest codec behaviour: the decoder only ever has the
+                # RECONSTRUCTED frame, so it must become the reference for the
+                # next P-frame (this also exposes real error accumulation).
+                prev_tensor = frame_rec.detach()
                 
                 frames_processed += 1
                 progress_bar.progress(frames_processed / num_frames)
