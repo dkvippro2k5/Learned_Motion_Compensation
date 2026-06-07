@@ -7,7 +7,7 @@ __pycache__/
 .venv/
 env/
 venv/
-
+data/raw_videos
 # Project Data and Checkpoints
 results/
 bitstream/
