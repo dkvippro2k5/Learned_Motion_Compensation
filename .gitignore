@@ -3,22 +3,19 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual Environment
+# Virtual environment
 .venv/
 env/
 venv/
+
+# Data, trained models, outputs (large / regenerable — share via Drive, not git)
 data/
 checkpoints/
-# Project Data and Checkpoints
 results/
 bitstream/
 
-# Media files
-*.mp4
-*.avi
-*.mkv
-*.png
-*.jpg
+# Logs
+*.log
 
 # OS generated files
 .DS_Store
