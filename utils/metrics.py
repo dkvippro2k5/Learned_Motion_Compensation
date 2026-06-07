@@ -4,7 +4,6 @@
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from skimage.metrics import structural_similarity as ssim_sk
 import math
 
@@ -51,26 +50,27 @@ def ssim(img1, img2, max_val=1.0):
         img2 = img2.permute(1, 2, 0).numpy()
     return float(ssim_sk(img1, img2, data_range=max_val, channel_axis=-1))
 
-def compute_bpp(likelihoods_tensor, num_pixels: int) -> float:
-    bits = -torch.log2(likelihoods_tensor.clamp(min=1e-9)).sum().item()
-    return bits / num_pixels
-
 def bitstream_bpp(byte_strings, H: int, W: int) -> float:
-    if isinstance(byte_strings, (list, tuple)):
-        total_bytes = sum(len(s) for s in byte_strings
-                          if isinstance(s, (bytes, bytearray)))
-    else:
-        total_bytes = len(byte_strings)
-    return total_bytes * 8 / (H * W)
+    """Real bits-per-pixel from an actual compressed bitstream. Recursively
+    sums the lengths of all byte-strings (handles the nested lists produced by
+    the hyperprior codecs, e.g. [[y_strings], [z_strings]])."""
+    def _count(x):
+        if isinstance(x, (bytes, bytearray)):
+            return len(x)
+        if isinstance(x, (list, tuple)):
+            return sum(_count(e) for e in x)
+        return 0
+    return _count(byte_strings) * 8 / (H * W)
 
 def bd_rate(rate1, psnr1, rate2, psnr2):
-    import numpy.polynomial.polynomial as P
-
     def _interp(rates, psnrs):
         log_rates = np.log(np.array(rates, dtype=np.float64))
         psnrs_arr = np.array(psnrs, dtype=np.float64)
 
-        coeffs = np.polyfit(psnrs_arr, log_rates, 3)
+        # Standard BD uses a cubic fit (needs >=4 points); fall back to a
+        # lower-degree fit when fewer operating points are available.
+        deg = min(3, len(psnrs_arr) - 1)
+        coeffs = np.polyfit(psnrs_arr, log_rates, deg)
         return coeffs, (psnrs_arr.min(), psnrs_arr.max())
 
     coeffs1, (lo1, hi1) = _interp(rate1, psnr1)

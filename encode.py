@@ -1,14 +1,14 @@
 # P-frame encoder (like OpenDVC_test_P-frame.py but PyTorch 2.x)
 
 
-import os, sys, argparse, pickle, struct, math
+import os, sys, argparse, pickle, struct
 import numpy as np
 import torch
 import cv2
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models.dvc_model import DVCModel
-from utils.metrics import psnr, ssim, ms_ssim_numpy, bitstream_bpp
+from utils.metrics import psnr, ssim, bitstream_bpp
 
 def get_args():
     p = argparse.ArgumentParser(description='DVC-inspired P-frame encoder')
@@ -70,12 +70,6 @@ def save_bitstream(bitstream_dict, path):
         f.write(struct.pack('>I', len(data)))
         f.write(data)
 
-def load_bitstream(path):
-    """Deserialize bitstream dict from binary file."""
-    with open(path, 'rb') as f:
-        size = struct.unpack('>I', f.read(4))[0]
-        return pickle.loads(f.read(size))
-
 def encode_one_pframe(model, ref_tensor, cur_tensor, bin_path, com_path, device):
     """Encode one P-frame. Returns dict with metrics."""
     ref = ref_tensor.to(device)
@@ -93,9 +87,9 @@ def encode_one_pframe(model, ref_tensor, cur_tensor, bin_path, com_path, device)
         file_bytes = os.path.getsize(bin_path)
         bpp = file_bytes * 8 / (H * W)
     else:
-
-        motion_bytes = sum(len(s[0]) for s in [bitstream_dict['motion_strings']] if s)
-        bpp = (motion_bytes) * 8 / (H * W)
+        # Real bitstream bpp = motion + residual byte-strings (recursively summed).
+        bpp = bitstream_bpp([bitstream_dict['motion_strings'],
+                             bitstream_dict['residual_strings']], H, W)
 
     metrics = {
         'psnr': psnr(cur, frame_rec),
@@ -133,8 +127,7 @@ def encode_video(model, frame_dir, out_com_dir, out_bin_dir, n_frames, gop, devi
             with torch.no_grad():
                 out = model.iframe_codec.compress(cur)
                 rec = model.iframe_codec.decompress(out)
-            i_bytes = sum(len(s) for s in out['strings'][0])
-            bpp = i_bytes * 8 / (H * W)
+            bpp = bitstream_bpp(out['strings'], H, W)
             save_frame(rec, com_path)
             ref_tensor = rec.cpu()
             metrics = {

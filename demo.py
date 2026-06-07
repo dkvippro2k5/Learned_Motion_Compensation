@@ -22,9 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models.dvc_model import DVCModel
 from models.flow_net import bilinear_warp
 from utils.metrics import psnr, ssim, residual_entropy
-from utils.visualization import (tensor_to_uint8, flow_to_color,
-                                  residual_heatmap, make_comparison_grid)
-from data.dataset import generate_synthetic_frames
+from utils.visualization import make_comparison_grid
 
 def get_args():
     p = argparse.ArgumentParser(description='Learned Motion Compensation Demo')
@@ -171,13 +169,9 @@ def main():
             ref_t = load_png(args.ref, args.height, args.width)
             cur_t = load_png(args.cur, args.height, args.width)
         else:
+            raise SystemExit(
+                "Provide input: --video <file>, or --ref <png> and --cur <png>.")
 
-            print("Auto-generating synthetic demo frames...")
-            tmp_dir = 'data/_demo_tmp'
-            generate_synthetic_frames(5, args.height, args.width, tmp_dir)
-            ref_t = load_png(f'{tmp_dir}/ref/00002.png', args.height, args.width)
-            cur_t = load_png(f'{tmp_dir}/cur/00002.png', args.height, args.width)
-            
         results = run_pipeline(model, ref_t, cur_t, device)
         make_comparison_grid(
             results['ref'],   results['cur'],

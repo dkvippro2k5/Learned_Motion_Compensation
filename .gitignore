@@ -9,8 +9,6 @@ env/
 venv/
 
 # Project Data and Checkpoints
-data/
-checkpoints/
 results/
 bitstream/
 

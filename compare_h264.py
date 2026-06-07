@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import torch
     import torchvision.transforms.functional as TF
-    from utils.metrics import psnr, ssim
+    from utils.metrics import psnr, ssim, bd_rate
     from models.dvc_model import DVCModel
 except ImportError as e:
     print(f"Import error ({e}). Please run from the project root with deps installed.")
@@ -180,6 +180,18 @@ def main():
     else:
         print("\n[!] No --checkpoints given: plotting H.264 baseline only "
               "(no fabricated DVC numbers).")
+
+    # ---- BD-Rate (>=3 points per curve; cubic fit if >=4, else lower degree) ----
+    if len(dvc_points) >= 3:
+        dvc_bpps = [p[0] for p in dvc_points]
+        dvc_psnrs = [p[1] for p in dvc_points]
+        bd = bd_rate(list(h264_bpps), list(h264_psnrs), dvc_bpps, dvc_psnrs)
+        print(f"\nBD-Rate (DVC vs H.264): {bd:+.1f}%  "
+              f"({'DVC needs more bits' if bd > 0 else 'DVC needs fewer bits'} "
+              f"at equal quality)")
+    elif dvc_points:
+        print(f"\n[i] BD-Rate skipped: need >=3 lambda points "
+              f"(have {len(dvc_points)}).")
 
     # ---- Plot (no extrapolation, only measured points) ----
     plt.figure(figsize=(10, 6))

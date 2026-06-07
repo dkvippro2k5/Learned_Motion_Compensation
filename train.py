@@ -16,16 +16,14 @@ Lambda values (bám sát OpenDVC):
 """
 
 import os, sys, argparse, json, time
-import numpy as np
 import torch
 import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models.dvc_model import DVCModel
-from utils.metrics import psnr, ssim, evaluate_frame
+from utils.metrics import psnr, ssim
 from data.dataset import get_dataloaders
 
 def get_args():
@@ -48,7 +46,7 @@ def get_args():
     p.add_argument('--res_M',   type=int, default=128,
                    help='Residual latent channels (M in OpenDVC)')
 
-    p.add_argument('--data_root',  type=str, default='data/synthetic')
+    p.add_argument('--data_root',  type=str, default='data/real')
     p.add_argument('--height',     type=int, default=128)
     p.add_argument('--width',      type=int, default=128)
     p.add_argument('--num_pairs',  type=int, default=400)
@@ -186,18 +184,20 @@ def main():
     for epoch in range(start_epoch, args.epochs):
         t0 = time.time()
         
-        is_log_epoch = ((epoch + 1) % 20 == 0) or (epoch == 0) or (epoch == args.epochs - 1)
+        # show the verbose tqdm bars only occasionally; print a one-line epoch
+        # summary EVERY epoch so the log file is easy to follow/monitor.
+        show_progress = ((epoch + 1) % 20 == 0) or (epoch == 0) or (epoch == args.epochs - 1)
 
         train_stats = train_one_epoch(model, train_loader, optimizer,
-                                      aux_optimizer, args.metric, device, show_progress=is_log_epoch)
-        val_stats   = validate(model, val_loader, args.metric, device, show_progress=is_log_epoch)
+                                      aux_optimizer, args.metric, device, show_progress=show_progress)
+        val_stats   = validate(model, val_loader, args.metric, device, show_progress=show_progress)
         scheduler.step()
 
         elapsed = time.time() - t0
         history['train'].append(train_stats)
         history['val'].append(val_stats)
 
-        if is_log_epoch:
+        if True:
             print(f"[{epoch+1:4d}/{args.epochs}] "
                   f"Loss:{train_stats['loss']:.4f}  "
                   f"bpp:{train_stats['bpp']:.4f}  "
@@ -220,8 +220,7 @@ def main():
                 'history': history,
                 'args': vars(args),
             }, os.path.join(ckpt_dir, 'best.pth'))
-            if is_log_epoch:
-                print(f"  ✓ best model saved (PSNR={best_val_psnr:.2f} dB)")
+            print(f"  ✓ best model saved (PSNR={best_val_psnr:.2f} dB)")
 
         torch.save({
             'epoch': epoch,

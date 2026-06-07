@@ -12,16 +12,16 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models.dvc_model import DVCModel
 from utils.metrics import psnr, ssim, residual_entropy
-from utils.visualization import tensor_to_uint8, flow_to_color, plot_training_history
+from utils.visualization import tensor_to_uint8, flow_to_color, plot_training_history, plot_rd_curve
 from models.flow_net import bilinear_warp
-from data.dataset import FramePairDataset, generate_synthetic_frames
+from data.dataset import FramePairDataset
 
 def get_args():
     p = argparse.ArgumentParser()
     p.add_argument('--checkpoints', type=str, nargs='+', required=True)
     p.add_argument('--labels',      type=str, nargs='+', default=None,
                    help='Labels for legend (e.g. lambda values)')
-    p.add_argument('--data_root',   type=str, default='data/synthetic')
+    p.add_argument('--data_root',   type=str, default='data/real_test')
     p.add_argument('--height',      type=int, default=128)
     p.add_argument('--width',       type=int, default=128)
     p.add_argument('--output_dir',  type=str, default='results')
@@ -83,42 +83,6 @@ def evaluate_model(model, loader, device, num_vis=6):
         'n': len(all_psnr),
     }, vis_samples
 
-def plot_rd_curves(rd_points, labels, save_path):
-    """Plot Rate-Distortion curves (like OpenDVC performance figures)."""
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    colors = ['#2563EB', '#DC2626', '#059669', '#D97706', '#7C3AED']
-
-    for ax in axes:
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-
-    for idx, (points, label) in enumerate(zip(rd_points, labels)):
-        bpp_vals  = [p['bpp']['mean'] for p in points]
-        psnr_vals = [p['psnr']['mean'] for p in points]
-        ssim_vals = [p['ssim']['mean'] for p in points]
-        c = colors[idx % len(colors)]
-
-        axes[0].plot(bpp_vals, psnr_vals, 'o-', color=c, label=label, linewidth=2, markersize=6)
-        axes[1].plot(bpp_vals, ssim_vals, 'o-', color=c, label=label, linewidth=2, markersize=6)
-
-    axes[0].set_xlabel('Bits per pixel (bpp)', fontsize=12)
-    axes[0].set_ylabel('PSNR (dB)', fontsize=12)
-    axes[0].set_title('Rate-Distortion (PSNR)', fontsize=13)
-    axes[0].legend(title='λ', fontsize=10)
-    axes[0].grid(True, alpha=0.3)
-
-    axes[1].set_xlabel('Bits per pixel (bpp)', fontsize=12)
-    axes[1].set_ylabel('SSIM', fontsize=12)
-    axes[1].set_title('Rate-Distortion (SSIM)', fontsize=13)
-    axes[1].legend(title='λ', fontsize=10)
-    axes[1].grid(True, alpha=0.3)
-
-    plt.suptitle('Learned Motion Compensation — R-D Performance', fontsize=14, y=1.02)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=120, bbox_inches='tight')
-    plt.close()
-    print(f"R-D curve saved: {save_path}")
-
 def plot_visualization_grid(vis_samples, save_path):
     """Sample grid: ref | cur | pred | rec | flow | residual."""
     n = len(vis_samples)
@@ -151,7 +115,8 @@ def main():
              if args.device == 'auto' else torch.device(args.device)
 
     if not os.path.exists(os.path.join(args.data_root, 'ref')):
-        generate_synthetic_frames(300, args.height, args.width, args.data_root)
+        raise SystemExit(
+            f"No frames at {args.data_root}/ref. Run: python extract_custom_videos.py")
     dataset = FramePairDataset(args.data_root, args.height, args.width)
     # batch_size=1 so the per-frame bpp from the model matches the per-frame
     # PSNR/SSIM (with a batch, losses['bpp'] is averaged and cannot be assigned
@@ -180,8 +145,13 @@ def main():
     with open(os.path.join(args.output_dir, 'eval_results.json'), 'w') as f:
         json.dump(summary, f, indent=2)
 
-    plot_rd_curves([[r] for r in all_results], labels,
-                   os.path.join(args.output_dir, 'rd_curve.png'))
+    # Reuse the canonical R-D plotter from utils.visualization (one point per
+    # checkpoint/lambda). points_list: one curve per model, each a list of
+    # flat {bpp, psnr, ssim} dicts.
+    rd_points = [[{'bpp': r['bpp']['mean'], 'psnr': r['psnr']['mean'],
+                   'ssim': r['ssim']['mean']}] for r in all_results]
+    plot_rd_curve(rd_points, labels, os.path.join(args.output_dir, 'rd_curve.png'))
+    print(f"R-D curve saved: {args.output_dir}/rd_curve.png")
 
     if all_vis:
         plot_visualization_grid(all_vis[:args.num_vis],
