@@ -26,10 +26,7 @@ Learned_Motion_Compensation/
 │   └── dataset.py               # Dataloaders for Vimeo-90K & Synthetic data
 ├── train.py                     # Main R-D training loop (MultiStepLR, Gradient Clipping)
 ├── evaluate.py                  # Evaluation script (R-D Curves)
-├── encode.py                    # Standalone bitstream encoder (.bin generator)
-├── demo.py                      # CLI Demo: 6-component visual analysis grid
-├── video_demo.py                # Headless CLI Demo: Side-by-side .mp4 export
-├── app.py                       # Live Demo System: Interactive Streamlit Web App
+├── app.py                       # Live Demo DUY NHẤT: Streamlit (nén thật + pipeline + metrics)
 ├── extract_custom_videos.py     # Data prep: Extract frames from .mp4 via FFmpeg
 ├── compare_h264.py              # Benchmarking against H.264 standard
 ├── requirements.txt             # Python dependencies
@@ -59,10 +56,13 @@ pip install -r requirements.txt
 
 ## 2. Dataset Strategy
 
-### 2.1 Production Training (Vimeo-90K Septuplet)
-Mô hình được thiết kế để huấn luyện trên tập dữ liệu chuẩn **Vimeo-90K Septuplet** (~546,000 cặp frame).
-- **Download:** http://data.csail.mit.edu/tofu/dataset/vimeo_septuplet.zip (82 GB)
-- **Input Strategy:** Hệ thống tự động Random Crop ảnh về `256x256` hoặc `128x128` với Batch Size = 8 để tối ưu GPU VRAM trong quá trình Train.
+### 2.1 Training data
+Mặc định `train.py` huấn luyện trên các cặp frame `(ref, cur)` trích từ video thật trong
+`data/real/` (sinh bằng `extract_custom_videos.py`). Đây là tập nhỏ, đủ để minh hoạ pipeline.
+
+> **Mở rộng (tùy chọn):** để có kết quả mạnh hơn, có thể train trên **Vimeo-90K Septuplet**
+> (~546k cặp, http://data.csail.mit.edu/tofu/dataset/vimeo_septuplet.zip, 82 GB) bằng cách
+> trỏ `--data_root` tới thư mục chứa các cặp `ref/`, `cur/` tương ứng.
 
 ### 2.2 Final Evaluation & Live Demo (Real-World Videos)
 Để kiểm thử khả năng nén thực tế, dự án sử dụng các video người thật chất lượng cao (960x540).
@@ -74,47 +74,30 @@ Mô hình được thiết kế để huấn luyện trên tập dữ liệu chu
 
 ## 3. Live Demo System (Interactive Web App)
 
-Dự án tích hợp sẵn một ứng dụng Web giao diện trực quan bằng Streamlit, cho phép:
-- Chọn file video đầu vào.
-- Tùy chỉnh hệ số Lambda (Bitrate) để xem sự thay đổi chất lượng thời gian thực.
-- So sánh song song Video Gốc và Video Nén (Reconstructed).
-- Hiển thị trực tiếp các chỉ số BPP, PSNR, SSIM.
+Toàn bộ phần demo (trước đây nằm ở `demo.py` và `video_demo.py`) đã được gộp vào
+**một ứng dụng Streamlit duy nhất** `app.py`, cho phép:
+- Chọn video (upload / mẫu), số frame, và **GOP** (khoảng cách I-frame).
+- **Pipeline view 6 thành phần** cho từng frame: Reference · Current · Predicted (warp) ·
+  Motion field · Residual heatmap · Reconstructed (có slider soi bất kỳ frame nào).
+- **So sánh song song** Video Gốc vs Tái tạo.
+- **Biểu đồ PSNR/bpp theo frame** thể hiện rõ drift trong mỗi GOP và điểm reset ở I-frame.
+- Chỉ số BPP / PSNR / SSIM / MS-SSIM trung thực.
 
 **Cách chạy Live Demo:**
 ```bash
 streamlit run app.py
 ```
 
----
+> **GOP & drift:** đây là một codec liên-frame, nên chất lượng (PSNR) tụt dần trong mỗi
+> GOP rồi được "làm mới" tại I-frame. GOP nhỏ hơn ⇒ ít drift nhưng bitrate cao hơn.
 
-## 4. Labeled Outputs (Terminal Demos)
-
-Để xuất ra các kết quả đánh nhãn (Raw, Residuals, Encoded) một cách chi tiết phục vụ báo cáo học thuật:
-
-**Trích xuất lưới ảnh (Visual Grid 6 thành phần):**
-```bash
-python demo.py --checkpoint checkpoints/psnr_l1024/best.pth
-```
-*Kết quả `results/demo_output.png` sẽ hiển thị rõ:*
-1. Reference $I_{t-1}$
-2. Current $I_t$
-3. Predicted $\hat{I}_t$
-4. Optical Flow (Color map)
-5. Residual $|R_t|$
-6. Reconstructed $I_t$ (Kèm PSNR, SSIM, BPP)
-
-**Trích xuất Video nén tự động (Headless Batch):**
-```bash
-python video_demo.py \
-    --checkpoint checkpoints/psnr_l1024/best.pth \
-    --video data/raw_videos/13910151_960_540_24fps.mp4 \
-    --frames 50 \
-    --output results/test_output.mp4
-```
+> **Nén thật:** `app.py` thực hiện arithmetic coding thật (CompressAI) cho cả flow và
+> residual nên bpp / R_motion / R_residual hiển thị là **số đo từ bitstream thật**, không
+> phải ước lượng.
 
 ---
 
-## 5. Training Instructions
+## 4. Training Instructions
 Hệ thống sử dụng Loss Function: $\mathcal{L} = \lambda \cdot D_{MSE} + R_{total}$ và tự động lưu Checkpoint tốt nhất.
 
 ```bash
@@ -124,10 +107,21 @@ python train.py --lmbda 1024 --metric psnr --epochs 500 --batch_size 8
 
 ---
 
-## 6. Experimental Results
-Sau 500 Epochs huấn luyện, mô hình học sâu của dự án (kiến trúc PWC-Net + VAE Entropy Bottleneck) đạt hiệu năng ổn định tại mốc cấu hình $\lambda = 1024$:
-- **Bitrate (BPP):** 4.806
-- **PSNR:** 32.69 dB
-- **SSIM:** 0.949
+## 5. Experimental Results
 
-Hệ thống loại bỏ hoàn toàn hiện tượng vỡ ô vuông (Blocking Artifacts) vốn là nhược điểm chí mạng của H.264/AVC ở các mức dung lượng nén thấp.
+Kết quả đo trên video thật (960×540 → xử lý ở 256×448), checkpoint `psnr_l512`, đã
+**kiểm chứng bpp ước lượng khớp ~1% với bpp nén thật bằng arithmetic coding**:
+
+| Vị trí trong GOP | PSNR (dB) | bpp | Baseline "copy frame trước" |
+|---|---|---|---|
+| P-frame đầu (frame 1) | **32.7** | 0.084 | 24.3 |
+| Giữa GOP (frame 6)    | 30.2 | 0.121 | 24.4 |
+| Cuối GOP (frame 12)   | 29.3 | 0.130 | 24.0 |
+
+- Motion compensation cho PSNR cao hơn baseline copy-frame ~**6–8 dB** ⇒ flow + warp
+  thực sự giảm residual/artifact (đúng mục tiêu đề bài).
+- PSNR tụt dần trong GOP (drift tích lũy) là hành vi bình thường của codec liên-frame;
+  `app.py` chèn I-frame theo GOP để làm mới chất lượng.
+
+> So với H.264 ở bitrate thấp, mô hình tránh được blocking artifact (vỡ ô vuông) nhờ
+> warp + residual liên tục thay vì chia block; xem khối so sánh trong live demo.

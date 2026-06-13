@@ -132,50 +132,6 @@ class ResidualCompressor(HyperpriorCompressor):
         super().__init__(in_ch=3, N=128, M=M)
 
 
-class IFrameCodec(nn.Module):
-    """Intra-frame (I-frame) codec using a REAL pretrained CompressAI image
-    model. Frozen — it is not part of P-frame training, it just provides
-    honest I-frame compression so the full GOP is actually coded."""
-
-    def __init__(self, quality: int = 3, pretrained: bool = True):
-        super().__init__()
-        from compressai.zoo import bmshj2018_factorized
-        try:
-            self.codec = bmshj2018_factorized(quality=quality, pretrained=pretrained)
-        except Exception as e:  # offline / download failure
-            print(f"[IFrameCodec] pretrained load failed ({e}); using random weights.")
-            self.codec = bmshj2018_factorized(quality=quality, pretrained=False)
-        for p in self.codec.parameters():
-            p.requires_grad = False
-
-    @staticmethod
-    def _pad(x, p=64):
-        h, w = x.shape[-2:]
-        H, W = (h + p - 1) // p * p, (w + p - 1) // p * p
-        return F.pad(x, (0, W - w, 0, H - h), mode='replicate'), (h, w)
-
-    def forward(self, x):
-        xp, (h, w) = self._pad(x)
-        out = self.codec(xp)
-        return out['x_hat'][..., :h, :w].clamp(0, 1), out['likelihoods']
-
-    def update(self, force: bool = True):
-        return self.codec.update(force=force)
-
-    @torch.no_grad()
-    def compress(self, x):
-        xp, (h, w) = self._pad(x)
-        out = self.codec.compress(xp)
-        out['orig_size'] = (h, w)
-        return out
-
-    @torch.no_grad()
-    def decompress(self, out):
-        rec = self.codec.decompress(out['strings'], out['shape'])['x_hat']
-        h, w = out['orig_size']
-        return rec[..., :h, :w].clamp(0, 1)
-
-
 def rate_estimate(likelihoods, num_pixels: int) -> torch.Tensor:
     """Estimated bitrate (bpp). Accepts a single likelihood tensor or a dict of
     likelihood tensors (hyperprior returns {'y':..., 'z':...})."""

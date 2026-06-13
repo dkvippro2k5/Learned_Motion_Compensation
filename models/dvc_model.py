@@ -4,23 +4,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .flow_net import PWCNet, bilinear_warp
-from .entropy_coder import MotionCompressor, ResidualCompressor, IFrameCodec, rate_estimate
+from .entropy_coder import MotionCompressor, ResidualCompressor, rate_estimate
 
 class DVCModel(nn.Module):
-  
-    def __init__(self, flow_M=128, res_M=128, lmbda=512, use_iframe_codec=False):
+
+    def __init__(self, flow_M=128, res_M=128, lmbda=512):
         super().__init__()
         self.lmbda = lmbda
-
         self.flow_net = PWCNet(max_disp=4)
-
         self.motion_coder = MotionCompressor(M=flow_M)
-
         self.residual_coder = ResidualCompressor(M=res_M)
-
-        self.use_iframe_codec = use_iframe_codec
-        if use_iframe_codec:
-            self.iframe_codec = IFrameCodec(quality=4, pretrained=True)
 
     def forward(self, frame_ref, frame_cur):
         
@@ -62,60 +55,42 @@ class DVCModel(nn.Module):
         }
 
     @torch.no_grad()
-    def encode_frame(self, frame_ref, frame_cur):
-        
+    def encode_frame(self, frame_ref, frame_cur, return_intermediates=False):
+        """Nén THẬT một P-frame (arithmetic coding flow + residual) rồi giải mã lại.
+
+        Trả về (bitstream_dict, frame_rec). Nếu return_intermediates=True, trả thêm
+        dict {flow_hat, pred, residual} để demo (app.py) vẽ motion field / residual
+        mà không phải nén lại. Đây là nơi DUY NHẤT chứa logic nén thật của codec.
+        """
         B, C, H, W = frame_cur.shape
 
         flow_raw = self.flow_net(frame_ref, frame_cur)
-
         motion_strings, motion_shape = self.motion_coder.compress(flow_raw)
-
         flow_hat = self.motion_coder.decompress(motion_strings, motion_shape, (H, W))
 
         frame_pred = bilinear_warp(frame_ref, flow_hat)
         residual = frame_cur - frame_pred
 
         res_strings, res_shape = self.residual_coder.compress(residual)
-
         residual_hat = self.residual_coder.decompress(res_strings, res_shape, (H, W))
         frame_rec = (frame_pred + residual_hat).clamp(0, 1)
 
-        return {
+        bitstream = {
             'motion_strings':  motion_strings,
             'residual_strings': res_strings,
             'motion_shape':    motion_shape,
             'res_shape':       res_shape,
             'H': H, 'W': W,
-        }, frame_rec
+        }
+        if return_intermediates:
+            return bitstream, frame_rec, {
+                'flow_hat': flow_hat, 'pred': frame_pred, 'residual': residual}
+        return bitstream, frame_rec
 
     def update(self, force: bool = True):
         """Build entropy-coder CDF tables. Call once before compress/decompress."""
         self.motion_coder.update(force=force)
         self.residual_coder.update(force=force)
-        if self.use_iframe_codec:
-            self.iframe_codec.update(force=force)
-
-    @torch.no_grad()
-    def decode_frame(self, frame_ref, bitstream_dict):
-        
-        H = bitstream_dict['H']
-        W = bitstream_dict['W']
-
-        flow_hat = self.motion_coder.decompress(
-            bitstream_dict['motion_strings'],
-            bitstream_dict['motion_shape'],
-            (H, W)
-        )
-
-        frame_pred = bilinear_warp(frame_ref, flow_hat)
-
-        residual_hat = self.residual_coder.decompress(
-            bitstream_dict['residual_strings'],
-            bitstream_dict['res_shape'],
-            (H, W)
-        )
-
-        return (frame_pred + residual_hat).clamp(0, 1)
 
 def _gaussian_window(size=11, sigma=1.5, channels=3):
     coords = torch.arange(size, dtype=torch.float32) - size // 2

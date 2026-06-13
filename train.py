@@ -49,7 +49,6 @@ def get_args():
     p.add_argument('--data_root',  type=str, default='data/real')
     p.add_argument('--height',     type=int, default=128)
     p.add_argument('--width',      type=int, default=128)
-    p.add_argument('--num_pairs',  type=int, default=400)
 
     p.add_argument('--checkpoint', type=str, default=None,
                    help='Output dir (auto: checkpoints/<metric>_l<lmbda>/)')
@@ -68,7 +67,6 @@ def build_model(args):
         flow_M=args.flow_M,
         res_M=args.res_M,
         lmbda=args.lmbda,
-        use_iframe_codec=False,  # I-frame codec adds weight, skip for now
     )
 
 def train_one_epoch(model, loader, optimizer, aux_optimizer, metric, device, show_progress=True):

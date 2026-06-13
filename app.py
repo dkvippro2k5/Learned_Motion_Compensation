@@ -1,173 +1,288 @@
-import streamlit as st
-import torch
-import cv2
-import numpy as np
 import os
 import tempfile
 import subprocess
-from models.dvc_model import DVCModel
-from utils.metrics import evaluate_frame
 
-st.set_page_config(page_title="Live Demo - DVC", layout="wide")
+import cv2
+import numpy as np
+import pandas as pd
+import torch
+import streamlit as st
+
+from models.dvc_model import DVCModel
+from utils.metrics import psnr, ssim, ms_ssim_numpy, bitstream_bpp
+from utils.visualization import flow_to_color, tensor_to_uint8
+
+PROC_H, PROC_W = 256, 448
+RAW_BPP = 24.0
+
+st.set_page_config(page_title="Live Demo — Learned Motion Compensation", layout="wide")
+
 
 @st.cache_resource
 def load_model(lmbda):
-    device = 'cpu'
-    model = DVCModel(lmbda=lmbda).to(device)
-    ckpt_path = f'checkpoints/psnr_l{lmbda}/latest.pth'
-    
-    if not os.path.exists(ckpt_path):
+    model = DVCModel(lmbda=lmbda)
+    for p in (f"checkpoints/psnr_l{lmbda}/best.pth",
+              f"checkpoints/psnr_l{lmbda}/latest.pth"):
+        if os.path.exists(p):
+            model.load_state_dict(torch.load(p, map_location="cpu")["model"], strict=True)
+            model.eval()
+            model.update(force=True)   # dựng bảng CDF cho arithmetic coding thật
+            return model, p
+    return None, None
 
-        ckpt_path = f'checkpoints/psnr_l{lmbda}/best.pth'
-    
-    if os.path.exists(ckpt_path):
-        ckpt = torch.load(ckpt_path, map_location=device)
-        model.load_state_dict(ckpt['model'], strict=True)
+
+def bgr_to_tensor(bgr):
+    rgb = cv2.cvtColor(cv2.resize(bgr, (PROC_W, PROC_H)), cv2.COLOR_BGR2RGB)
+    return torch.from_numpy(rgb.astype(np.float32) / 255.0).permute(2, 0, 1).unsqueeze(0)
+
+
+def heatmap_shared(r_hw, vmax):
+    r = np.clip(r_hw / (vmax + 1e-8) * 255, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(cv2.applyColorMap(r, cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB)
+
+
+def zoom_crop(rgb, cx_pct, cy_pct, size=80, scale=4):
+    h, w = rgb.shape[:2]
+    x0 = max(0, min(w - size, int(cx_pct / 100 * w) - size // 2))
+    y0 = max(0, min(h - size, int(cy_pct / 100 * h) - size // 2))
+    crop = rgb[y0:y0 + size, x0:x0 + size]
+    return cv2.resize(crop, (size * scale, size * scale), interpolation=cv2.INTER_NEAREST)
+
+
+def write_mp4(frames_rgb, path, fps=10):
+    td = tempfile.mkdtemp()
+    for j, rgb in enumerate(frames_rgb):
+        cv2.imwrite(os.path.join(td, f"f_{j:03d}.png"), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+    subprocess.run(["ffmpeg", "-y", "-framerate", str(fps), "-i", os.path.join(td, "f_%03d.png"),
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", path], capture_output=True)
+    return path
+
+
+@torch.no_grad()
+def run_sequence(model, frames_bgr, gop, progress=None):
+    results = []
+    ref_mc = ref_no = None
+    for i, bgr in enumerate(frames_bgr):
+        cur_t = bgr_to_tensor(bgr)
+        cur_np = tensor_to_uint8(cur_t)
+        if i % gop == 0:
+            results.append({"idx": i, "type": "I", "cur": cur_np,
+                            "rec": cur_np, "rec_nomc": cur_np})
+            ref_mc = ref_no = cur_t
+        else:
+            # Có MC: nén THẬT qua model.encode_frame (arithmetic coding flow + residual).
+            bs, rec_t, mid = model.encode_frame(ref_mc, cur_t, return_intermediates=True)
+            flow_hat, pred_t, resid_mc = mid["flow_hat"], mid["pred"], mid["residual"]
+            R_motion = bitstream_bpp(bs["motion_strings"], PROC_H, PROC_W)
+            R_residual = bitstream_bpp(bs["residual_strings"], PROC_H, PROC_W)
+
+            # No-MC: dự đoán = copy frame trước, cùng residual codec, cũng nén thật.
+            resid_no = cur_t - ref_no
+            n_str, n_shape = model.residual_coder.compress(resid_no)
+            resid_no_hat = model.residual_coder.decompress(n_str, n_shape, (PROC_H, PROC_W))
+            rec_no_t = (ref_no + resid_no_hat).clamp(0, 1)
+            cur_np = tensor_to_uint8(cur_t)
+            rec_np = tensor_to_uint8(rec_t)
+            r_mc = resid_mc[0].abs().mean(0).cpu().numpy()
+            r_no = resid_no[0].abs().mean(0).cpu().numpy()
+            vmax = max(float(r_no.max()), float(r_mc.max()))
+            results.append({
+                "idx": i, "type": "P",
+                "cur": cur_np, "rec": rec_np, "rec_nomc": tensor_to_uint8(rec_no_t),
+                "flow": flow_to_color(flow_hat),
+                "pred_mc": tensor_to_uint8(pred_t),
+                "pred_no": tensor_to_uint8(ref_no),
+                "resid_mc": heatmap_shared(r_mc, vmax),
+                "resid_no": heatmap_shared(r_no, vmax),
+                "psnr": psnr(cur_t, rec_t),
+                "psnr_nomc": psnr(cur_t, rec_no_t),
+                "ssim": ssim(cur_t, rec_t),
+                "ms_ssim": ms_ssim_numpy(cur_np.astype(np.float32) / 255,
+                                         rec_np.astype(np.float32) / 255),
+                "bpp": R_motion + R_residual,
+                "bpp_nomc": bitstream_bpp(n_str, PROC_H, PROC_W),
+                "r_motion": R_motion,
+                "r_residual": R_residual,
+                "psnr_pred_mc": psnr(cur_t, pred_t),
+                "psnr_pred_no": psnr(cur_t, ref_no),
+            })
+            ref_mc, ref_no = rec_t, rec_no_t
+        if progress is not None:
+            progress.progress((i + 1) / len(frames_bgr))
+    return results
+
+
+def encode_h264_sequence(frames_rgb, crf, fps=10):
+    td = tempfile.mkdtemp(); src = os.path.join(td, "s"); os.makedirs(src, exist_ok=True)
+    for j, rgb in enumerate(frames_rgb, 1):
+        cv2.imwrite(os.path.join(src, f"{j:04d}.png"), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+    mp4 = os.path.join(td, "h.mp4")
+    subprocess.run(["ffmpeg", "-y", "-framerate", str(fps), "-i", os.path.join(src, "%04d.png"),
+                    "-c:v", "libx264", "-crf", str(crf), "-preset", "medium",
+                    "-pix_fmt", "yuv420p", mp4], capture_output=True)
+    dec = os.path.join(td, "d"); os.makedirs(dec, exist_ok=True)
+    subprocess.run(["ffmpeg", "-y", "-i", mp4, os.path.join(dec, "%04d.png")], capture_output=True)
+    n = len(frames_rgb)
+    bpp = (os.path.getsize(mp4) * 8) / (n * PROC_H * PROC_W) if os.path.exists(mp4) else 0.0
+    recs, ps, ms = [], [], []
+    for j in range(1, n + 1):
+        p = os.path.join(dec, f"{j:04d}.png")
+        rgb = cv2.cvtColor(cv2.imread(p), cv2.COLOR_BGR2RGB) if os.path.exists(p) else frames_rgb[j - 1]
+        recs.append(rgb)
+        o, rr = frames_rgb[j - 1].astype(np.float32) / 255, rgb.astype(np.float32) / 255
+        ps.append(psnr(o, rr)); ms.append(ms_ssim_numpy(o, rr))
+    return recs, bpp, ps, ms
+
+
+def match_h264_bitrate(frames_rgb, target_bpp, fps=10):
+    lo, hi, best = 18, 45, None
+    for _ in range(6):
+        mid = (lo + hi) // 2
+        recs, bpp, ps, ms = encode_h264_sequence(frames_rgb, mid, fps)
+        if best is None or abs(bpp - target_bpp) < abs(best[1] - target_bpp):
+            best = (recs, bpp, ps, ms, mid)
+        if bpp > target_bpp:
+            lo = mid + 1
+        else:
+            hi = mid - 1
+        if lo > hi:
+            break
+    return best
+
+
+st.title("Live Demo — Learned Motion Compensation (PWCNet + DVC)")
+
+st.sidebar.header("Cấu hình")
+lambda_choice = st.sidebar.select_slider("Model (λ)", options=[256, 512, 1024], value=512)
+up = st.sidebar.file_uploader("Import video", type=["mp4", "avi", "mov"])
+num_frames = st.sidebar.slider("Số frame xử lý", 2, 100, 16)
+gop = st.sidebar.slider("GOP (khoảng cách I-frame)", 2, 20, 8)
+
+if st.sidebar.button("Run", type="primary"):
+    if up is None:
+        st.sidebar.error("Hãy tải lên một video.")
     else:
-        st.error(f"No checkpoint found for Lambda={lmbda}!")
-        return None
+        tf = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        tf.write(up.read())
+        video_path = tf.name
+        with st.spinner(f"Tải model (λ={lambda_choice})…"):
+            model, _ = load_model(lambda_choice)
+        if model is None:
+            st.error(f"Không có checkpoint cho λ={lambda_choice}.")
+            st.stop()
+        cap = cv2.VideoCapture(video_path)
+        src_fps = cap.get(cv2.CAP_PROP_FPS)
+        src_fps = src_fps if src_fps and src_fps > 0 else 25.0  # giữ fps gốc cho phát lại
+        frames = []
+        while len(frames) < num_frames:
+            ok, f = cap.read()
+            if not ok:
+                break
+            frames.append(f)
+        cap.release()
+        if len(frames) < 2:
+            st.error("Không đọc đủ frame.")
+            st.stop()
+        prog = st.progress(0.0)
+        results = run_sequence(model, frames, gop, prog)
+        prog.empty()
+        td = tempfile.mkdtemp()
+        videos = {
+            "orig": write_mp4([x["cur"] for x in results], os.path.join(td, "orig.mp4"), src_fps),
+            "nomc": write_mp4([x["rec_nomc"] for x in results], os.path.join(td, "nomc.mp4"), src_fps),
+            "mc":   write_mp4([x["rec"] for x in results], os.path.join(td, "mc.mp4"), src_fps),
+        }
+        dvc_bpp = float(np.mean([x["bpp"] for x in results if x["type"] == "P"]))
+        with st.spinner("Dò CRF để H.264 cùng bitrate…"):
+            h264 = match_h264_bitrate([x["cur"] for x in results], dvc_bpp)
+        videos["h264"] = write_mp4(h264[0], os.path.join(td, "h264.mp4"), src_fps)
+        st.session_state.update(results=results, lmbda=lambda_choice,
+                                h264=h264, dvc_bpp=dvc_bpp, videos=videos)
 
-    model.motion_coder.entropy_bottleneck.update()
-    model.residual_coder.entropy_bottleneck.update()
-    model.eval()
-    return model
 
-st.title("🎬 Live Demo: Learned Motion Compensation (v2)")
-st.markdown("This interactive system demonstrates End-to-End Deep Video Compression (DVC) in near real-time.")
+if "results" not in st.session_state:
+    st.info("Tải lên video ở thanh bên rồi bấm 🚀 Chạy.")
+    st.stop()
 
-st.sidebar.header("⚙️ Configuration")
+results = st.session_state["results"]
+p_frames = [r for r in results if r["type"] == "P"]
+if not p_frames or "rec_nomc" not in p_frames[0]:
+    st.warning("Kết quả từ phiên chạy cũ — bấm 🚀 Chạy lại.")
+    st.stop()
 
-st.sidebar.markdown("### Bitrate vs Quality")
-lambda_choice = st.sidebar.select_slider(
-    r"Select Lambda ($\lambda$)",
-    options=[256, 512, 1024, 2048],
-    value=1024,
-    help="Higher lambda = better quality (PSNR) but higher bitrate (BPP)."
+p_indices = [r["idx"] for r in p_frames]
+sel = st.select_slider("Chọn P-frame", options=p_indices, value=p_indices[0])
+r = next(x for x in results if x["idx"] == sel)
+
+st.markdown(f"### Phân tích frame {sel}")
+c1, c2, c3 = st.columns(3)
+c1.image(r["cur"],     caption="Ground truth Iₜ (frame thật)")
+c2.image(r["pred_mc"], caption=f"Prediction MC (warp Iₜ₋₁)")
+c3.image(r["flow"],    caption="Motion field (optical flow)")
+c4, c5, c6 = st.columns(3)
+c4.image(r["resid_no"], caption="Residual No-MC (cur − Iₜ₋₁)")
+c5.image(r["resid_mc"], caption="Residual MC ")
+c6.markdown(
+    f"| Metrics | Value|\n|---|---|\n"
+    f"| PSNR tái tạo | **{r['psnr']:.2f} dB** |\n"
+    f"| bpp | **{r['bpp']:.4f}** |\n"
+    f"| R_motion | **{r['r_motion']:.4f}** |\n"
+    f"| R_residual | **{r['r_residual']:.4f}** |\n"
+    f"| Tỉ số nén | **{RAW_BPP / r['bpp']:.0f}×** |\n"
 )
 
-st.sidebar.markdown("### Input Video")
-input_source = st.sidebar.radio(
-    "Select Video Source",
-    ["Upload Video", "Demo Video 1", "Demo Video 2"]
-)
+def _avg(k):
+    return float(np.mean([x[k] for x in p_frames]))
 
-video_path = None
-if input_source == "Upload Video":
-    uploaded_file = st.sidebar.file_uploader("Upload an MP4 file", type=['mp4', 'avi', 'mov'])
-    if uploaded_file is not None:
-        tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-        tfile.write(uploaded_file.read())
-        video_path = tfile.name
-elif input_source == "Demo Video 1":
-    video_path = "data/raw_videos/15604713_960_540_25fps.mp4"
-else:
-    video_path = "data/raw_videos/13910151_960_540_24fps.mp4"
+st.markdown("#### Trung bình (toàn bộ P-frames)")
+avg_row = pd.DataFrame({
+    "PSNR tái tạo (dB)": [_avg("psnr")],
+    "SSIM":             [_avg("ssim")],
+    "MS-SSIM":          [_avg("ms_ssim")],
+    "bpp":              [_avg("bpp")],
+    "Tỉ số nén (×)":    [RAW_BPP / _avg("bpp")],
+    "R_motion (bpp)":   [_avg("r_motion")],
+    "R_residual (bpp)": [_avg("r_residual")],
+}, index=["Trung bình"]).round(4)
+st.table(avg_row)
 
-num_frames = st.sidebar.slider("Frames to Process", min_value=2, max_value=50, value=10)
+st.markdown("### Compare with no Motion compensation")
+vids = st.session_state["videos"]
+bpp_no = np.mean([x["bpp_nomc"] for x in p_frames])
+psnr_no = np.mean([x["psnr_nomc"] for x in p_frames])
+psnr_mc = np.mean([x["psnr"] for x in p_frames])
+v1, v2, v3 = st.columns(3)
+v1.markdown("**Gốc**"); v1.video(vids["orig"])
+v2.markdown(f"**no MC** · bpp {bpp_no:.4f} · psnr {psnr_no:.1f} dB"); v2.video(vids["nomc"])
+v3.markdown(f"**MC** · bpp {st.session_state['dvc_bpp']:.4f} · psnr {psnr_mc:.1f} dB"); v3.video(vids["mc"])
 
-if st.sidebar.button("🚀 Process Video", type="primary"):
-    if not video_path or not os.path.exists(video_path):
-        st.sidebar.error("Please provide a valid video.")
-    else:
-        with st.spinner(f"Loading Model (Lambda={lambda_choice})..."):
-            model = load_model(lambda_choice)
-        
-        if model is not None:
 
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            cap = cv2.VideoCapture(video_path)
+recs_h, bpp_h, ps_h, ms_h, crf_h = st.session_state["h264"]
+st.markdown("### Compare with H.264 (cùng bitrate)")
+b1, b2 = st.columns(2)
+b1.metric(f"H.264 · bpp {bpp_h:.4f}",
+          f"PSNR {np.mean(ps_h):.2f} dB", f"MS-SSIM {np.mean(ms_h):.4f}", delta_color="off")
+b2.metric(f"Codec học (λ={st.session_state['lmbda']}) · bpp {st.session_state['dvc_bpp']:.4f}",
+          f"PSNR {psnr_mc:.2f} dB",
+          f"MS-SSIM {np.mean([x['ms_ssim'] for x in p_frames]):.4f}", delta_color="off")
 
-            temp_dir = tempfile.mkdtemp()
-            orig_dir = os.path.join(temp_dir, 'orig')
-            rec_dir = os.path.join(temp_dir, 'rec')
-            os.makedirs(orig_dir, exist_ok=True)
-            os.makedirs(rec_dir, exist_ok=True)
+hv1, hv2, hv3 = st.columns(3)
+hv1.markdown("**Gốc**"); hv1.video(vids["orig"])
+hv2.markdown(f"**H.264** · bpp {bpp_h:.4f} · psnr {np.mean(ps_h):.1f} dB"); hv2.video(vids["h264"])
+hv3.markdown(f"**Learned** · bpp {st.session_state['dvc_bpp']:.4f} · psnr {psnr_mc:.1f} dB"); hv3.video(vids["mc"])
 
-            ret, prev_frame = cap.read()
-            if not ret:
-                st.error("Failed to read video.")
-                st.stop()
+st.markdown("**Soi từng frame**")
+a1, a2, a3 = st.columns(3)
+a1.image(r["cur"],    caption="Gốc")
+a2.image(recs_h[sel], caption=f"H.264 · {ps_h[sel]:.2f} dB")
+a3.image(r["rec"],    caption=f"Codec học · {r['psnr']:.2f} dB")
 
-            prev_frame = cv2.resize(prev_frame, (448, 256))
-            cv2.imwrite(os.path.join(orig_dir, "frame_00.png"), prev_frame)
-            cv2.imwrite(os.path.join(rec_dir, "frame_00.png"), prev_frame) 
-            
-            prev_tensor = torch.from_numpy(cv2.cvtColor(prev_frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0).permute(2,0,1).unsqueeze(0)
-            
-            metrics = {'bpp': [], 'psnr': [], 'ssim': [], 'ms_ssim': []}
-            frames_processed = 1
+st.markdown("**🔍 Zoom**")
+zx, zy = st.columns(2)
+cx = zx.slider("Vị trí ngang (%)", 0, 100, 50, key="zx")
+cy = zy.slider("Vị trí dọc (%)", 0, 100, 50, key="zy")
+z1, z2, z3 = st.columns(3)
+z1.image(zoom_crop(r["cur"], cx, cy),    caption="Gốc")
+z2.image(zoom_crop(recs_h[sel], cx, cy), caption="H.264 — chú ý ô vuông")
+z3.image(zoom_crop(r["rec"], cx, cy),    caption="Codec học")
 
-            while frames_processed < num_frames:
-                ret, cur_frame = cap.read()
-                if not ret: 
-                    break
-                
-                cur_frame = cv2.resize(cur_frame, (448, 256))
-                cur_tensor = torch.from_numpy(cv2.cvtColor(cur_frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0).permute(2,0,1).unsqueeze(0)
-                
-                status_text.text(f"Processing Frame {frames_processed+1}/{num_frames}...")
-                
-                with torch.no_grad():
-
-                    frame_rec, losses = model(prev_tensor, cur_tensor)
-                    bpp = losses['bpp'].item()
-                    
-                rec_np = (frame_rec[0].permute(1, 2, 0).numpy() * 255.0).clip(0, 255).astype(np.uint8)
-                rec_bgr = cv2.cvtColor(rec_np, cv2.COLOR_RGB2BGR)
-
-                cur_rgb = cv2.cvtColor(cur_frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-                rec_rgb = cv2.cvtColor(rec_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-                frame_metrics = evaluate_frame(cur_rgb, rec_rgb, bpp_val=bpp)
-                
-                metrics['bpp'].append(bpp)
-                metrics['psnr'].append(frame_metrics['psnr'])
-                metrics['ssim'].append(frame_metrics['ssim'])
-                metrics['ms_ssim'].append(frame_metrics['ms_ssim'])
-
-                cv2.imwrite(os.path.join(orig_dir, f"frame_{frames_processed:02d}.png"), cur_frame)
-
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                cv2.putText(rec_bgr, f"BPP: {bpp:.2f}", (10, 30), font, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
-                cv2.putText(rec_bgr, f"PSNR: {frame_metrics['psnr']:.2f}dB", (10, 60), font, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
-                cv2.imwrite(os.path.join(rec_dir, f"frame_{frames_processed:02d}.png"), rec_bgr)
-
-                # Honest codec behaviour: the decoder only ever has the
-                # RECONSTRUCTED frame, so it must become the reference for the
-                # next P-frame (this also exposes real error accumulation).
-                prev_tensor = frame_rec.detach()
-                
-                frames_processed += 1
-                progress_bar.progress(frames_processed / num_frames)
-            
-            cap.release()
-
-            status_text.text("Compiling MP4 videos for playback...")
-            orig_mp4 = os.path.join(temp_dir, 'original.mp4')
-            rec_mp4 = os.path.join(temp_dir, 'reconstructed.mp4')
-            
-            subprocess.run(['ffmpeg', '-y', '-framerate', '10', '-i', os.path.join(orig_dir, 'frame_%02d.png'), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', orig_mp4], capture_output=True)
-            subprocess.run(['ffmpeg', '-y', '-framerate', '10', '-i', os.path.join(rec_dir, 'frame_%02d.png'), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', rec_mp4], capture_output=True)
-            
-            progress_bar.empty()
-            status_text.empty()
-            st.success("✅ Processing Complete!")
-
-            st.markdown("### 📊 Average Performance Metrics")
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Bitrate (BPP)", f"{np.mean(metrics['bpp']):.4f}")
-            m2.metric("Quality (PSNR)", f"{np.mean(metrics['psnr']):.2f} dB")
-            m3.metric("Structure (SSIM)", f"{np.mean(metrics['ssim']):.4f}")
-            m4.metric("MS-SSIM", f"{np.mean(metrics['ms_ssim']):.4f}")
-
-            st.markdown("### 🎥 Side-by-Side Playback")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**Original Video**")
-                st.video(orig_mp4)
-                
-            with col2:
-                st.markdown(f"**Compressed Video (Lambda={lambda_choice})**")
-                st.video(rec_mp4)
